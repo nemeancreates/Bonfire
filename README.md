@@ -45,3 +45,7 @@ scripts\test.ps1
 ```
 
 Edit, then `/reload` in game. If Windows blocks the scripts, run them from the VS Code tasks or with `pwsh -ExecutionPolicy Bypass -File scripts	est.ps1`.
+
+## License
+
+All rights reserved, see [LICENSE](LICENSE). Bonfire is free to download and use, and you can change it for your own use, but please don't re-upload or redistribute it, or use its code elsewhere, without asking. The libraries in `Libs/` are fetched by `scripts/setup.ps1` and keep their own licenses.

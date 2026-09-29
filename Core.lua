@@ -3,11 +3,32 @@ local ADDON, ns = ...
 local Bonfire = LibStub("AceAddon-3.0"):NewAddon(ADDON, "AceConsole-3.0", "AceEvent-3.0", "AceTimer-3.0", "AceComm-3.0", "AceSerializer-3.0")
 ns.Bonfire = Bonfire
 
+-- Bonfire's messages go to its own chat tab when there is one, so they don't drown in a busy
+-- chat. The tab flashes when something new lands in it.
+local consolePrint = Bonfire.Print
+function Bonfire:Print(...)
+	local frame = ns.replyFrame or (ns.Chat and ns.Chat.frame)
+	if not frame then return consolePrint(self, ...) end
+	consolePrint(self, frame, ...)
+	if FCF_StartAlertFlash and frame ~= SELECTED_CHAT_FRAME then pcall(FCF_StartAlertFlash, frame) end
+end
+
+local consolePrintf = Bonfire.Printf
+function Bonfire:Printf(...)
+	local frame = ns.replyFrame or (ns.Chat and ns.Chat.frame)
+	if not frame then return consolePrintf(self, ...) end
+	consolePrintf(self, frame, ...)
+	if FCF_StartAlertFlash and frame ~= SELECTED_CHAT_FRAME then pcall(FCF_StartAlertFlash, frame) end
+end
+
 local defaults = {
 	global = {
 		-- unit indexes ns.COIN_UNITS; total is the bet being built up, confirmed is what the table plays for
 		stake = { forFun = true, amount = 5, unit = 2, total = 0, confirmed = 0 },
 		pins = true,
+		chatTab = true,                             -- Bonfire's own chat tab, and table chat
+		bet = { amount = 5, unit = 2, total = 0 },  -- the side bet being built
+		betCut = 5,                                  -- host cut for new betting cards, percent
 		stats = { played = 0, won = 0 },
 	},
 }
@@ -41,13 +62,24 @@ function ns.Coins(copper)
 	return ns.CoinString(copper)
 end
 
+-- +5g in green or -2s in red, "even" for nothing.
+function ns.SignedCoins(copper)
+	if not copper or copper == 0 then return "even" end
+	return ("%s%s|r"):format(copper > 0 and "|cff66ff66+" or "|cffff6666-", ns.CoinString(math.abs(copper)))
+end
+
 -- "Welcoming Campfire": the buff you get from resting at a Forever campfire
 -- (spell ID from DynamicCam's Forever camping situation; verify with /bf auras).
 ns.CAMP_AURA = 1229739
 
-function ns.AtCampfire()
+-- True while the Welcoming Campfire buff is on you: proof a campfire is burning next to you.
+function ns.CampfireBuff()
 	local ok, aura = pcall(C_UnitAuras.GetPlayerAuraBySpellID, ns.CAMP_AURA)
 	return ok and aura ~= nil
+end
+
+function ns.AtCampfire()
+	return ns.CampfireBuff() or ns.Table:NearOwnFire()
 end
 
 -- The Basic Campfire Kit's exact name isn't confirmed, so match on "campfire".
@@ -93,19 +125,26 @@ function Bonfire:OnSlash(input)
 	local cmd, rest = strtrim(input or ""):match("^(%S*)%s*(.-)$")
 	cmd = cmd:lower()
 	if cmd == "" then return ns.UI:Toggle() end
+	-- What you type is answered where you typed it, not in the Bonfire tab.
+	ns.replyFrame = SELECTED_CHAT_FRAME or DEFAULT_CHAT_FRAME
 	local c = commands[cmd]
+	local ok, err
 	if not c then
-		self:Print("/bf opens the window. Commands:")
-		for _, name in ipairs(order) do print(("  /bf %s %s"):format(name, commands[name].usage)) end
-		return
+		self:Print(cmd == "help" and "/bf opens the window. Commands:"
+			or ("No command called '" .. cmd .. "'. /bf opens the window. Commands:"))
+		for _, name in ipairs(order) do self:Print(("  /bf %s %s"):format(name, commands[name].usage)) end
+	else
+		ok, err = pcall(c.fn, rest)
 	end
-	c.fn(rest)
+	ns.replyFrame = nil
+	if ok == false then geterrorhandler()(err) end
 end
 
 function Bonfire:OnInitialize()
 	self.db = LibStub("AceDB-3.0"):New("BonfireDB", defaults, true)
 	self:RegisterChatCommand("bonfire", "OnSlash")
 	self:RegisterChatCommand("bf", "OnSlash")
+	self:RegisterChatCommand("bfhelp", function() self:OnSlash("help") end)
 end
 
 function Bonfire:OnEnable()
@@ -115,6 +154,7 @@ function Bonfire:OnEnable()
 	ns.Trade:Enable()
 	ns.UI:Enable()
 	ns.Range:Enable()
+	ns.Chat:Enable()
 	local _, build, _, interface = GetBuildInfo()
 	self:Printf("v%s loaded (client %s, interface %d). /bf to open.",
 		C_AddOns.GetAddOnMetadata(ADDON, "Version"), build, interface)

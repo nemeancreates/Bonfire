@@ -3,14 +3,22 @@ local Bonfire = ns.Bonfire
 
 -- Beta check kit: each command answers one open question from docs/BETA-NOTES.md.
 
--- Which aura marks "near a campfire"? Stand at one (out of combat) and list buffs,
+-- What a buff does, from its own description text ("Increases Strength by 5").
+local function Describe(aura)
+	local ok, text = pcall(C_Spell.GetSpellDescription, aura.spellId)
+	text = ok and type(text) == "string" and text:gsub("%s+", " ") or ""
+	if #text > 110 then text = text:sub(1, 107) .. "..." end
+	return text ~= "" and (" - " .. text) or ""
+end
+
+-- Which buff marks "near a campfire"? Stand at one (out of combat) and list buffs,
 -- or turn on watch and walk up to a fire.
-ns.AddCommand("auras", "- list your buffs with spell IDs (stand at a campfire)", function()
+ns.AddCommand("auras", "- list your buffs and what they do (stand at a campfire)", function()
 	local i = 1
 	while true do
 		local aura = C_UnitAuras.GetAuraDataByIndex("player", i, "HELPFUL")
 		if not aura then break end
-		Bonfire:Printf("%s  spellId=%s", tostring(aura.name), tostring(aura.spellId))
+		Bonfire:Printf("%s%s", tostring(aura.name), Describe(aura))
 		i = i + 1
 	end
 	if i == 1 then Bonfire:Print("no buffs") end
@@ -26,7 +34,7 @@ ns.AddCommand("watch", "- toggle logging buffs you gain and lose (walk up to a f
 			for _, aura in ipairs(info.addedAuras or {}) do
 				if aura.isHelpful then
 					seen[aura.auraInstanceID] = aura.name
-					Bonfire:Printf("|cff66ff66+|r %s  spellId=%s", tostring(aura.name), tostring(aura.spellId))
+					Bonfire:Printf("|cff66ff66+|r %s%s", tostring(aura.name), Describe(aura))
 				end
 			end
 			for _, id in ipairs(info.removedAuraInstanceIDs or {}) do
@@ -73,6 +81,13 @@ ns.AddCommand("status", "- channel, position and roll-parser check", function()
 	Bonfire:Printf("position: map %s  %.1f, %.1f", tostring(mapID), (x or 0) * 100, (y or 0) * 100)
 	Bonfire:Printf("me: %s (%s)   last sender seen: %s", ns.Me(),
 		ns.Comm.selfSender and "learned from the channel" or "NOT learned yet", tostring(ns.Comm.lastSender))
+	local comm, now, peers = ns.Comm, GetTime(), 0
+	Bonfire:Printf("comms: sent %d, own echoes %d, from others %d", comm.sent, comm.echoes, comm.received)
+	for peer, info in pairs(comm.peers) do
+		peers = peers + 1
+		Bonfire:Printf("  Bonfire user heard: %s (%ds ago, via %s)", peer, now - info.at, tostring(info.via))
+	end
+	if peers == 0 then Bonfire:Print("  no other Bonfire users heard yet (try /bf ping)") end
 	local count = 0
 	for host, fire in pairs(ns.Beacon.fires) do
 		count = count + 1
@@ -105,11 +120,12 @@ ns.AddCommand("api", "- check the game APIs Bonfire uses exist in this client", 
 		"IsShiftKeyDown", "JoinTemporaryChannel", "PlayMusic", "PlaySound", "PlaySoundFile",
 		"RandomRoll", "StopMusic", "UnitName", "tContains", "tinsert",
 		"C_AddOns.GetAddOnMetadata", "C_Container.GetContainerItemInfo", "C_Container.GetContainerNumSlots",
-		"C_Item.GetItemNameByID", "C_Map.GetPlayerMapPosition", "C_Spell.GetSpellName", "C_Timer.After",
+		"C_Item.GetItemNameByID", "C_Map.GetPlayerMapPosition", "C_Spell.GetSpellDescription", "C_Spell.GetSpellName", "C_Timer.After",
 		"C_Timer.NewTimer", "C_UnitAuras.GetAuraDataByIndex", "C_UnitAuras.GetPlayerAuraBySpellID",
 		"ERR_TRADE_COMPLETE", "NUM_CHAT_WINDOWS", "RANDOM_ROLL_RESULT", "SOUNDKIT", "UISpecialFrames",
 		"MoneyInputFrame_SetCopper", "TradePlayerInputMoneyFrame",
 		"StartDuel", "AcceptDuel", "CancelDuel", "DUEL_WINNER_KNOCKOUT", "DUEL_WINNER_RETREAT",
+		"FCF_OpenNewWindow", "GetChatWindowInfo", "ChatFrame_AddChannel", "LeaveChannelByName",
 	}
 	local missing = {}
 	for _, path in ipairs(needed) do
@@ -144,4 +160,23 @@ ns.AddCommand("find", "<text> - search the game's API names (e.g. trademoney)", 
 	Bonfire:Printf("%d match(es):", #hits)
 	for i = 1, math.min(#hits, 25) do print("  " .. hits[i]) end
 	if #hits > 25 then print(("  ...and %d more, try a longer search"):format(#hits - 25)) end
+end)
+
+-- Ask everyone running Bonfire to say hello, then list who answered. Works without any table.
+ns.AddCommand("ping", "- find other Bonfire users on the channel", function()
+	ns.Comm:Broadcast("Q", {}, "ALERT")
+	if not ns.Comm:ChannelId() then
+		Bonfire:Print("Not connected to the Bonfire channel yet, so only people within earshot can hear this.")
+	end
+	Bonfire:Print("Asking who's out there, results in 6 seconds...")
+	C_Timer.After(6, function()
+		local now, n = GetTime(), 0
+		for peer, info in pairs(ns.Comm.peers) do
+			if now - info.at < 10 then
+				n = n + 1
+				Bonfire:Printf("  %s answered (via %s)", peer, tostring(info.via))
+			end
+		end
+		if n == 0 then Bonfire:Print("  nobody answered. Same faction and layer? Do they have Bonfire and a joined channel (/bf status)?") end
+	end)
 end)

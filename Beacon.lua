@@ -52,6 +52,7 @@ end
 function Beacon:Announce()
 	local t = ns.Table.current
 	if not t or t.host ~= ns.Me() then return end
+	if t.stake > 0 and ns.Table:HasBots() then return end  -- practice gold tables stay off the map
 	self.lastAnnounce = GetTime()
 	ns.Comm:Broadcast("B", {
 		m = t.fire[1], x = floor(t.fire[2] * 10000), y = floor(t.fire[3] * 10000),

@@ -22,7 +22,17 @@ The host holds the pot. Before a round, each player trades their stake to the ho
 
 Winnings stay with the host as credit for the next round. **Cash out**, walking away, or the host closing up puts you in the payout queue. The host's ledger survives a `/reload` or relog (up to an hour); a game in progress is voided and stakes go back to balances. If a trade happens outside the addon, the host can fix it with `/bf adjust <name> <amount>`.
 
-Commands: `/bf host` (no campfire needed), `/bf leave`, `/bf adjust`, `/bf stats`, `/bf pins`, `/bf reset`, `/bf status`, plus beta checks (`/bf api`, `/bf find`, `/bf auras`, `/bf watch`, `/bf sound`, `/bf music`).
+Placing a campfire opens the window on its own. Two-player testing: see [docs/TEST-PLAN.md](docs/TEST-PLAN.md).
+
+**Practice alone:** host a table, then `/bf dummy 4` seats four pretend players (up to 9). They play Embers by themselves, "trade" instantly when you click Collect or Pay, and sometimes cash out. `/bf dummy clear` sends them home.
+
+**Side bets:** a host can run a card of rounds (fights, races) and everyone else bets on a side from the **Bets** tab, one bet per round (cancel an unpaid one to change it). Amounts are dialled up to 100 gold or 99 silver or copper; add more than one coin type for bigger bets. Winners split the pool in proportion to their bets, minus an optional host cut, and a round nobody bet against refunds every stake. Bets are paid to the host like stakes: from credit already held, or by trade (the host's list shows who still owes). Side bets are gold, so the Bets tab is greyed out (and bets refused) on a For fun table: switch to Gambling and confirm a bet first. Try it alone with `/bf bets demo` (it opens a practice table for you and gives it a pretend stake), which seats six practice players and a card of three fights. When every round is locked (each round's timer, the **Lock bets** button, or Shift-click to lock them all), a **payment window** lists what everyone owes the host across all rounds, with a Collect button per person for the host and Pay host for each player. Payments are picked up automatically as the trades complete. The host presses **Start games** on the same page; anyone who hasn't paid has their bets dropped. Winners can only be declared once the games have started.
+
+The host picks the cut (2, 5, 10 or 20 percent) on a slider, locked once bets are in, and opens more rounds with **New round**, naming the sides and the game (Duel, Deathroll, Critter Race, Dice or Custom). The game is shown at the top of the betting window. `/bf bets add <A> <B>` also adds a round and `/bf bets close` ends betting.
+
+**Chat:** Bonfire keeps its messages in their own **Bonfire** chat tab, which flashes when something new lands in it, and each table gets a chat channel that everyone at the fire joins when they sit down and leaves when the table ends (the tab tells you the channel number: type `/<number> hello`). `/bf chat` switches both off.
+
+Commands (`/bf help` or `/bfhelp` lists them in game): `/bf host` (no campfire needed), `/bf chat`, `/bf burn <seconds>` (testing), `/bf ping` (find other Bonfire users), `/bf leave`, `/bf adjust`, `/bf stats`, `/bf pins`, `/bf reset`, `/bf status`, plus beta checks (`/bf api`, `/bf find`, `/bf auras`, `/bf watch`, `/bf sound`, `/bf music`).
 
 ## Development (Windows)
 

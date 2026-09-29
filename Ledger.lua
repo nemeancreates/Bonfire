@@ -75,6 +75,26 @@ function Ledger.Settle(t, winners)
 	return share
 end
 
+-- Records a finished game in the table's tally: wins, losses, net copper and the current
+-- streak (positive = wins in a row, negative = losses) for every player dealt in.
+-- players is who was committed to the game; winners and share come from Settle.
+function Ledger.Record(t, players, winners, share)
+	t.tally = t.tally or {}
+	local won = {}
+	for _, name in ipairs(winners) do won[name] = true end
+	for _, name in ipairs(players or {}) do
+		local r = t.tally[name] or { w = 0, l = 0, net = 0, streak = 0 }
+		t.tally[name] = r
+		if won[name] then
+			r.w, r.net = r.w + 1, r.net + share - t.stake
+			r.streak = r.streak > 0 and r.streak + 1 or 1
+		else
+			r.l, r.net = r.l + 1, r.net - t.stake
+			r.streak = r.streak < 0 and r.streak - 1 or -1
+		end
+	end
+end
+
 -- A trade between the host and a player finished. copper > 0: the host received it.
 function Ledger.Credit(t, name, copper)
 	local balance = Ledger.Balance(t, name) + copper

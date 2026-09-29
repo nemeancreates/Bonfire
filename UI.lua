@@ -44,6 +44,8 @@ local function Tooltip(widget, text)
 	widget:SetScript("OnLeave", GameTooltip_Hide)
 end
 
+UI.Button, UI.Tooltip = Button, Tooltip
+
 local function StakeChanged()
 	ns.Table:SetStake()
 	UI:Refresh()
@@ -67,7 +69,7 @@ local function BuildStake()
 	local function Step(sign)
 		return function()
 			local step = IsShiftKeyDown() and ns.STAKE_STEP_BIG or ns.STAKE_STEP
-			db.amount = math.max(ns.STAKE_STEP, math.min(ns.STAKE_MAX, db.amount + sign * step))
+			db.amount = math.max(ns.STAKE_STEP, math.min(ns.COIN_UNITS[db.unit].max, db.amount + sign * step))
 			UI:Refresh()
 		end
 	end
@@ -80,6 +82,7 @@ local function BuildStake()
 	stake.more:SetPoint("LEFT", stake.amount, "RIGHT", 4, 0)
 	stake.unit = Button(stake, "", 36, function()
 		db.unit = db.unit % #ns.COIN_UNITS + 1
+		db.amount = math.min(db.amount, ns.COIN_UNITS[db.unit].max)
 		UI:Refresh()
 	end)
 	stake.unit:SetPoint("LEFT", stake.more, "RIGHT", 4, 0)
@@ -145,7 +148,7 @@ end
 
 local function Build()
 	frame = CreateFrame("Frame", "BonfireFrame", UIParent, "BasicFrameTemplateWithInset")
-	frame:SetSize(380, 400)
+	frame:SetSize(380, 440)
 	UI:Place()
 	frame:SetMovable(true)
 	frame:EnableMouse(true)
@@ -176,6 +179,12 @@ local function Build()
 	frame.sub:SetPoint("TOPLEFT", 14, -50)
 	frame.sub:SetPoint("RIGHT", -14, 0)
 	frame.sub:SetJustifyH("LEFT")
+
+	frame.notice = frame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+	frame.notice:SetPoint("BOTTOMLEFT", 14, 36)
+	frame.notice:SetPoint("RIGHT", frame, "RIGHT", -14, 0)
+	frame.notice:SetJustifyH("LEFT")
+	frame.notice:SetTextColor(1, 0.4, 0.3)
 
 	rows = {}
 	for i = 1, ROWS do
@@ -213,7 +222,7 @@ local function Build()
 	buttons.leave:SetPoint("BOTTOMRIGHT", -12, 10)
 	Tooltip(buttons.here, function()
 		if ns.AtCampfire() then return "Open a table at the campfire you're standing at." end
-		return "Stand at a campfire, or carry a Basic Campfire Kit (craft it with Cooking) to light one. /bf host skips this check."
+		return "Hosting unlocks at your own campfire, or at anyone else's once you've rested there about a minute and have the Welcoming Campfire buff. You can also light one with a Basic Campfire Kit. /bf host skips this check."
 	end)
 	Tooltip(buttons.light, "Uses your Basic Campfire Kit. Your table opens as soon as the fire is lit.")
 	Tooltip(buttons.stoke, "Deal in everyone who's ready and start Embers.")
@@ -229,6 +238,20 @@ local function Build()
 	Tooltip(buttons.next, "Open a trade with the next player in the queue. Both of you still click Trade.")
 
 	BuildStake()
+
+	-- Switches between the table and its side bets, when the table has a card.
+	UI.viewButton = Button(frame, "Bets", 64, function()
+		UI.view = UI.view == "bets" and "table" or "bets"
+		UI:Refresh()
+	end)
+	UI.viewButton:SetHeight(20)
+	UI.viewButton:SetPoint("TOPLEFT", 10, -4)
+	Tooltip(UI.viewButton, function()
+		local t = ns.Table.current
+		if t and t.stake == 0 then return "Side bets use gold, so they're off on a For fun table. Switch to Gambling to use them." end
+		return "Side bets for this table."
+	end)
+	UI.viewButton:Hide()
 end
 
 local function ClearRows()
@@ -302,7 +325,13 @@ local STATUS = { [0] = "|cff66ccffbanked|r", [1] = "|cffffaa33stoking|r", [2] = 
 local function Subtitle(t)
 	local gs = t.gs
 	if t.state == "playing" and gs then
-		return ("Round %d of %d%s"):format(gs.r, gs.R, t.lastRoll and ("   last roll: |cffffffff%d|r"):format(t.lastRoll) or "")
+		local last = ""
+		if t.lastRoll == 1 then
+			last = "   |cffff6666rolled a 1: fire out, unbanked pots lost|r"
+		elseif t.lastRoll then
+			last = ("   last roll: |cffffffff%d|r"):format(t.lastRoll)
+		end
+		return ("Round %d of %d%s"):format(gs.r, gs.R, last)
 	elseif t.state == "settling" then
 		return "Closing up: the host is paying everyone back."
 	elseif t.winners and #t.winners > 0 then
@@ -376,7 +405,10 @@ local function ShowTable(t)
 			else
 				status = t.state == "playing" and "|cff999999sitting out|r" or "|cff66ff66ready|r"
 			end
-			SetRow(n, ("%s   %s%s"):format(Name(name), status, held), hosting and label or nil, Trade(name))
+			local r = t.tally and t.tally[name]
+			local record = r and r.w + r.l > 0
+				and ("   |cff999999%d-%d%s|r"):format(r.w, r.l, t.stake > 0 and (" " .. ns.SignedCoins(r.net)) or "") or ""
+			SetRow(n, ("%s   %s%s%s"):format(Name(name), status, held, record), hosting and label or nil, Trade(name))
 		end
 	end
 	for _, p in ipairs(payouts) do
@@ -440,6 +472,7 @@ function UI:Enable()
 	C_Timer.NewTicker(1, function()
 		local t = ns.Table.current
 		if frame and frame:IsShown() and t then frame.burn:SetText(BurnText(t)) end
+		ns.BetsUI:Tick()
 	end)
 end
 
@@ -447,7 +480,34 @@ function UI:Refresh()
 	if not frame or not frame:IsShown() then return end
 	ClearRows()
 	local t = ns.Table.current
+	local market = t and t.market
+	UI.viewButton:SetShown(market ~= nil)
+	-- Side bets are gold bets: gray the tab out on a For fun table so it can't be used by accident.
+	UI.viewButton:SetEnabled(market ~= nil and t.stake > 0)
+	if not market or t.stake == 0 then UI.view = nil end
+	if market and UI.view == "bets" then
+		UI.viewButton:SetText("Table")
+		frame.burn:SetText(BurnText(t))
+		ns.BetsUI:Show(frame, t)
+		buttons.leave:SetText(ns.Table:IsHosting() and "Close table" or "Leave")
+		buttons.leave:SetWidth(100)
+		buttons.leave:Show()
+		return
+	end
+	ns.BetsUI:Hide()
+	UI.viewButton:SetText("Bets")
 	if t then ShowTable(t) else ShowFires() end
+end
+
+-- A red line near the bottom of the window for a few seconds, for when a click is refused.
+function UI:Notice(text)
+	if not frame or not frame:IsShown() then return end
+	frame.notice:SetText(text)
+	frame.noticeToken = (frame.noticeToken or 0) + 1
+	local token = frame.noticeToken
+	C_Timer.After(6, function()
+		if frame.noticeToken == token then frame.notice:SetText("") end
+	end)
 end
 
 function UI:Show()

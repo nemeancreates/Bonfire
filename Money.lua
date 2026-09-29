@@ -8,11 +8,13 @@ local COIN_ICON = {
 }
 
 ns.COIN_UNITS = {
-	{ key = "g", name = "gold", copper = 10000, color = "ffd700", icon = COIN_ICON.g },
-	{ key = "s", name = "silver", copper = 100, color = "c7c7cf", icon = COIN_ICON.s },
-	{ key = "c", name = "copper", copper = 1, color = "eda55f", icon = COIN_ICON.c },
+	-- max: the most of one coin type to dial in. 100 silver is just 1 gold, so silver and
+	-- copper stop at 99; build bigger amounts by adding more than one coin type.
+	{ key = "g", name = "gold", copper = 10000, color = "ffd700", icon = COIN_ICON.g, max = 100 },
+	{ key = "s", name = "silver", copper = 100, color = "c7c7cf", icon = COIN_ICON.s, max = 99 },
+	{ key = "c", name = "copper", copper = 1, color = "eda55f", icon = COIN_ICON.c, max = 99 },
 }
-ns.STAKE_STEP, ns.STAKE_STEP_BIG, ns.STAKE_MAX = 5, 10, 1000  -- per-click steps, and the most of one coin type to add at once
+ns.STAKE_STEP, ns.STAKE_STEP_BIG = 5, 10  -- per-click steps
 ns.BET_CAP = 1000 * 10000                                      -- the most a bet can total: 1000 gold
 
 local UNIT = { g = 10000, s = 100, c = 1 }

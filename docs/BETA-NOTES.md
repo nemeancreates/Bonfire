@@ -13,6 +13,7 @@ Open questions from the concept brief, and how to answer each one in the Forever
 | Are all game APIs Bonfire calls present in this client? (`GetCoinTextureString` and `SetTradeMoney` weren't) | `/bf api` lists any that are missing; `/bf find <text>` searches names | `SetTradeMoney` is missing: the fill-in now falls back to `MoneyInputFrame_SetCopper(TradePlayerInputMoneyFrame, ...)`. Unverified. |
 | Does the gold fill-in work in the trade window (fallback path)? | Pay in on a gold table; chat says "Filled in" only if the trade box really shows the amount | |
 | Host hand-off: does the first-joined player get the table when the host walks off, and do all players follow? | Two players at a for-fun table; host walks 35+ yd away and waits ~12 s | Needs 3 clients to check that a third player follows. |
+| Do side bets pay in and settle correctly between two real players? (whisper a bet, trade the gold, lock, declare a winner, credit held) | See TEST-PLAN step 7. `/bf bets demo` tries the window alone with practice players | Engine has offline tests; the window and the trades have not been run in game. |
 | Do duels exist for addons? (`StartDuel`, `DUEL_*` messages) | `/bf api` lists them if missing; see Duels in CONCEPT.md | |
 | Does the Expert (Cooking 200) campfire use a different aura? | Same as above, at an Expert fire | |
 | Can addons join the `BonfireCamp` channel and send addon messages on it outdoors? | `/bf status` on two clients, host on one and check the other sees the fire | |

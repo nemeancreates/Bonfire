@@ -37,6 +37,7 @@ end
 
 -- Must run from a click. Falls back to asking the player to target and retry.
 function Trade:Open(name)
+	if ns.Table:IsBot(name) then return ns.Table:BotTrade(name) end
 	if self.partner then return end
 	pcall(InitiateTrade, UnitFor(name) or Ambiguate(name, "none"))
 	C_Timer.After(1.5, function()

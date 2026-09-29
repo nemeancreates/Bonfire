@@ -1,7 +1,7 @@
 std = "lua51"
 max_line_length = false
 codes = true
-exclude_files = { ".tools/", "Libs/", ".release/" }
+exclude_files = { ".tools/", "Libs/", ".release/", "dist/" }
 ignore = {
 	"212/self", -- unused self in method-style callbacks
 }
@@ -18,9 +18,11 @@ read_globals = {
 	"GetMoney", "GetNormalizedRealmName", "GetNumGroupMembers",
 	"GetPlayerTradeMoney", "GetServerTime", "GetTargetTradeMoney", "GetTime", "InitiateTrade",
 	"IsInRaid", "IsShiftKeyDown", "JoinTemporaryChannel", "PlayMusic", "PlaySound", "PlaySoundFile",
-	"RandomRoll", "StopMusic", "UnitName", "issecretvalue",
+	"RandomRoll", "StopMusic", "UnitGUID", "UnitName", "issecretvalue",
 	-- FrameXML globals and constants
 	"C_TradeInfo", "MoneyInputFrame_SetCopper", "TradePlayerInputMoneyFrame",
+	"DEFAULT_CHAT_FRAME", "geterrorhandler", "FCF_OpenNewWindow", "FCF_StartAlertFlash", "GetChatWindowInfo", "ChatFrame_AddChannel",
+	"LeaveChannelByName", "SELECTED_CHAT_FRAME",
 	"ERR_TRADE_COMPLETE", "NUM_BAG_SLOTS", "NUM_CHAT_WINDOWS", "RANDOM_ROLL_RESULT", "SOUNDKIT", "UIParent", "UISpecialFrames",
 	"floor", "strtrim", "tContains", "tinsert",
 }

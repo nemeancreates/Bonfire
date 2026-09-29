@@ -1,0 +1,22 @@
+## Interface: 16001
+## Title: Bonfire
+## Notes: Find campfires on your minimap and play quick dice games, for fun or for gold, with whoever is sitting at them.
+## Author: Nemean
+## Version: 0.1.0
+## SavedVariables: BonfireDB
+## IconTexture: Interface\Icons\Spell_Fire_Fire
+
+embeds.xml
+
+Money.lua
+Core.lua
+Roll.lua
+Ledger.lua
+Comm.lua
+Beacon.lua
+Games\Embers.lua
+Table.lua
+Range.lua
+Trade.lua
+UI.lua
+Debug.lua

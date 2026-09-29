@@ -1,0 +1,6 @@
+{
+  "Lua.runtime.version": "Lua 5.1",
+  "Lua.workspace.ignoreDir": [".tools", ".release"],
+  "Lua.workspace.useGitIgnore": false,
+  "files.eol": "\n"
+}

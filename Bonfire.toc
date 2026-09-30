@@ -2,7 +2,8 @@
 ## Title: Bonfire
 ## Notes: Find campfires on your minimap and play quick dice games, for fun or for gold, with whoever is sitting at them.
 ## Author: Nemean
-## Version: 0.7.2
+## Version: 0.7.3
+## X-License: All Rights Reserved
 ## SavedVariables: BonfireDB
 ## IconTexture: Interface\Icons\Spell_Fire_Fire
 

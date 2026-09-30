@@ -10,7 +10,7 @@ $stage = Join-Path $dist 'Bonfire'
 if (Test-Path $dist) { Remove-Item $dist -Recurse -Force }
 New-Item -ItemType Directory -Force $stage | Out-Null
 
-Copy-Item (Join-Path $root '*.lua'), (Join-Path $root 'Bonfire.toc'), (Join-Path $root 'embeds.xml'), (Join-Path $root 'README.md') $stage
+Copy-Item (Join-Path $root '*.lua'), (Join-Path $root 'Bonfire.toc'), (Join-Path $root 'embeds.xml'), (Join-Path $root 'README.md'), (Join-Path $root 'LICENSE') $stage
 Copy-Item (Join-Path $root 'Games'), (Join-Path $root 'Libs') $stage -Recurse
 
 $zip = Join-Path $dist "Bonfire-$version.zip"

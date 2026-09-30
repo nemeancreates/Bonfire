@@ -2,13 +2,14 @@ local _, ns = ...
 local Bonfire = ns.Bonfire
 local Rep = ns.Rep
 
--- The Honest Broker's legwork. Every minute your addon says a quiet hello to anyone within /say
--- range; when two Bonfire users meet (passing each other, or sitting at the same table) they
--- whisper each other a small digest of what they know about hosts, at most every half hour per
--- person. It also keeps the payout clock on gold a host still holds for you, and answers
--- /bf rep. The rules are in Reputation.lua.
+-- The Honest Broker's legwork. Every client says hello each minute (Beacon.lua); when two Bonfire
+-- users meet (within 60 yd or /say range, or sitting at the same table) they whisper each other a
+-- small digest of what they know about hosts, at most every half hour per person. It also keeps
+-- the payout clock on gold a host still holds for you, and answers /bf rep. The rules are in
+-- Reputation.lua.
 local Broker = {
-	HELLO_EVERY = 60,    -- seconds between hellos
+	CHECK_EVERY = 60,    -- seconds between payout clock checks
+	MEET_WITHIN = 60,    -- yards: close enough to count as meeting
 	AGAIN_AFTER = 1800,  -- seconds before trading digests with the same player again
 	GAP = 20,            -- seconds between any two digests we send, so a crowd can't flood the whisper limit
 	sentTo = {},
@@ -22,16 +23,18 @@ function Broker:Store()
 end
 
 function Broker:Enable()
+	-- Beacon records the hello first (it registered first), so the distance is known here.
 	ns.Comm.On("HI", function(_, sender, distribution)
-		if distribution == "SAY" then self:Met(sender) end
+		local p = ns.Beacon.players[sender]
+		local d = p and p.mapID and ns.Beacon:Distance(p)
+		if distribution == "SAY" or (d and d <= self.MEET_WITHIN) then self:Met(sender) end
 	end)
 	ns.Comm.On("RD", function(d, sender) self:OnDigest(d, sender) end)
-	Bonfire:ScheduleRepeatingTimer(function() self:Tick() end, self.HELLO_EVERY)
+	Bonfire:ScheduleRepeatingTimer(function() self:Tick() end, self.CHECK_EVERY)
 	C_Timer.After(30, function() Rep.Prune(self:Store(), GetServerTime()) end)
 end
 
 function Broker:Tick()
-	ns.Comm:Say("HI", {})
 	if Rep.CheckOwed(self:Store(), ns.Me(), GetServerTime()) then ns.UI:Refresh() end
 end
 
@@ -64,6 +67,7 @@ function Broker:OnDigest(d, sender)
 		if Rep.Merge(store, rec, sender, me, now) then changed = true end
 	end
 	if changed then ns.UI:Refresh() end
+	if ns.Log then ns.Log:Note("traded host reputation with %s (%d records)", ns.Short(sender), #recs) end
 	self:Met(sender)  -- answer with ours
 end
 

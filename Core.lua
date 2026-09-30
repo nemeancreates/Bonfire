@@ -27,7 +27,13 @@ local defaults = {
 		stake = { forFun = true, amount = 5, unit = 2, total = 0, confirmed = 0 },
 		pins = true,
 		game = "embers",                            -- the game your next table plays
-		chatTab = true,                             -- Bonfire's own chat tab, and table chat
+		chatTab = true,                             -- Bonfire's own chat tab
+		-- Settings page (the gear in the window's title bar)
+		quips = true,                               -- your character's lines and emotes
+		tableChat = true,                           -- a chat channel for everyone at your table
+		askRating = true,                           -- the Honest Broker's question after a table
+		autoInvite = true,                          -- hosting: invite whoever clicks Join (off: you let them in)
+		bigTables = true,                           -- hosting: up to 10 seats, the group a raid past 5
 		bet = { amount = 5, unit = 2, total = 0 },  -- the side bet being built
 		betCut = 5,                                  -- host cut for new betting cards, percent
 		stats = { played = 0, won = 0 },

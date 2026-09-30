@@ -8,7 +8,7 @@ local Bonfire = ns.Bonfire
 -- while (EXPIRE), so a line is never said long after the moment it's about. A reaction to a
 -- roll is never said on a Roll click: that click makes a new roll, and the line would sound
 -- like it's about that one ("Big number, big smile" as a 1 lands). Practice players talk in the
--- Bonfire tab when something happens. All of it is switched off by /bf chat.
+-- Bonfire tab when something happens. All of it is switched off on the settings page (the gear).
 local Quips = {
 	CHANCE = {
 		start = 0.4,     -- the host pressed Start
@@ -78,7 +78,7 @@ function Quips.RollKind(value, max)
 end
 
 function Quips:Enabled()
-	return Bonfire.db.global.chatTab
+	return Bonfire.db.global.quips
 end
 
 function Quips:Remember(line)
@@ -216,6 +216,6 @@ ns.AddCommand("quip", "[kind] - try a line and emote (start win lose streak_win 
 	arg = strtrim(arg or ""):lower()
 	if arg == "" then arg = "start" end
 	if not Quips.lines[arg] then return Bonfire:Print("No such kind of line.") end
-	if not Quips:Enabled() then return Bonfire:Print("Quips are off. /bf chat turns them on.") end
+	if not Quips:Enabled() then return Bonfire:Print("Quips are off. Turn them on in settings (the gear in the Bonfire window).") end
 	Quips:Speak(arg)  -- typing the command counts as a click
 end)

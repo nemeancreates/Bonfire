@@ -3,7 +3,7 @@ local Bonfire = ns.Bonfire
 
 -- Bonfire gets its own chat tab, so its messages don't drown in a busy chat, and each table
 -- gets a small chat channel that everyone at the fire joins when they sit down and leaves
--- when the table ends. /bf chat turns both off.
+-- when the table ends. Each has its own switch on the settings page (/bf chat flips the tab).
 local Chat = {}
 ns.Chat = Chat
 
@@ -40,7 +40,7 @@ end
 -- Join the table's channel while you have a table, leave it when the table ends.
 function Chat:Sync()
 	local t = ns.Table.current
-	local want = Bonfire.db.global.chatTab and t and ChannelFor(t) or nil
+	local want = Bonfire.db.global.tableChat and t and ChannelFor(t) or nil
 	if want == self.channel then return end
 	if self.channel then
 		if LeaveChannelByName then pcall(LeaveChannelByName, self.channel) end
@@ -70,9 +70,13 @@ function Chat:Enable()
 	C_Timer.NewTicker(2, function() self:Sync() end)
 end
 
-ns.AddCommand("chat", "- Bonfire's own chat tab and table chat, on or off", function()
-	local db = Bonfire.db.global
-	db.chatTab = not db.chatTab
-	if db.chatTab then Chat:EnsureTab() else Chat.frame = nil end
-	Bonfire:Print("Bonfire's chat tab, table chat and random quips are " .. (db.chatTab and "on: look for the Bonfire tab." or "off: messages are back in your main chat."))
+-- The Bonfire tab on or off (the settings page has the same switch).
+function Chat:SetTab(on)
+	Bonfire.db.global.chatTab = on
+	if on then self:EnsureTab() else self.frame = nil end
+end
+
+ns.AddCommand("chat", "- Bonfire's own chat tab on or off (more switches on the settings page, the gear)", function()
+	Chat:SetTab(not Bonfire.db.global.chatTab)
+	Bonfire:Print("Bonfire's chat tab is " .. (Bonfire.db.global.chatTab and "on: look for the Bonfire tab." or "off: messages are back in your main chat."))
 end)

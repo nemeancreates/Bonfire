@@ -12,8 +12,9 @@ Both: `/bf ping`. Six seconds later each of you should see the other listed as h
 ## 1. Find and join (for fun)
 1. A: place a campfire (Light a fire, or the kit from the bags). The Bonfire window should open by itself. Click **Host at this fire**.
 2. B (about 50 yd away): a fire pin should show on the minimap and world map, and in `/bf`.
-3. B: walk within 35 yd, click **Join**. Both windows should show both players seated.
-   - This tests whispers to a two-word name, and that B's client trusts A as the host.
+3. B: walk within 35 yd, click **Join**. A's addon sends B a party invite and B's accepts it by itself (no popup); both windows show both players seated. Past five players the group should turn into a raid.
+   - This tests whispers to a two-word name, party invites by addon, and that B's client trusts A as the host.
+4. Invites the other way: B leaves the table (B should leave the group too). A's table page lists B under *Bonfire players nearby* with **Invite**. A clicks it: B's window opens on *A invites you to their fire* with **Join** (or *Too far*) and **No thanks**. B clicks Join and is seated as above.
 
 ## 2. Rolls: the make-or-break check for Deathroll
 Not grouped, standing together:

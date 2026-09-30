@@ -3,6 +3,88 @@ local Bonfire = ns.Bonfire
 
 -- Beta check kit: each command answers one open question from docs/BETA-NOTES.md.
 
+-- The passive log: a quiet record, kept between sessions, of which Bonfire users we heard and by
+-- which path (channel, say, party, whisper), plus the moments that matter for playing together
+-- (join requests, invites, errors). A few minutes online at the same time as another player, even
+-- just questing, answers the open questions without a test script. /bf report (or Report on the
+-- settings page) prints it. Always on; it stays on this computer. (What travels between players
+-- is the Honest Broker's host reputation, in Broker.lua.)
+local Log = { EVENTS = 80, PEERS = 40 }
+ns.Log = Log
+
+function Log:Data()
+	local g = Bonfire.db and Bonfire.db.global
+	if not g then return end
+	g.diag = g.diag or { peers = {}, events = {} }
+	return g.diag
+end
+
+function Log:Note(fmt, ...)
+	local d = self:Data()
+	if not d then return end
+	table.insert(d.events, 1, { GetServerTime(), select("#", ...) > 0 and fmt:format(...) or fmt })
+	while #d.events > self.EVENTS do table.remove(d.events) end
+end
+
+-- A message arrived from sender over path. The first time a player is heard on a path is noted.
+function Log:Heard(sender, path, kind)
+	local d = self:Data()
+	if not d then return end
+	local p = d.peers[sender]
+	if not p then
+		p = { first = GetServerTime(), paths = {} }
+		d.peers[sender] = p
+		-- Keep it small: forget the player heard longest ago.
+		local count, oldest, oldestAt = 0, nil, math.huge
+		for name, q in pairs(d.peers) do
+			count = count + 1
+			if (q.last or 0) < oldestAt then oldest, oldestAt = name, q.last or 0 end
+		end
+		if count > self.PEERS and oldest then d.peers[oldest] = nil end
+	end
+	p.last = GetServerTime()
+	p.paths[path] = (p.paths[path] or 0) + 1
+	if p.paths[path] == 1 then self:Note("first heard %s via %s (%s)", ns.Short(sender), path, tostring(kind)) end
+end
+
+local function Ago(at)
+	local s = GetServerTime() - at
+	if s < 90 then return s .. "s" end
+	if s < 5400 then return math.floor(s / 60 + 0.5) .. "m" end
+	if s < 129600 then return math.floor(s / 3600 + 0.5) .. "h" end
+	return math.floor(s / 86400 + 0.5) .. "d"
+end
+
+function Log:Report()
+	local d = self:Data()
+	if not d then return end
+	Bonfire:Printf("Bonfire %s report: %s, %s, channel %s, group %s", C_AddOns.GetAddOnMetadata("Bonfire", "Version"),
+		tostring(GetNormalizedRealmName()), tostring(UnitFactionGroup("player")),
+		ns.Comm:ChannelId() and ("/" .. ns.Comm:ChannelId()) or "not joined", ns.Comm:Group() and ns.Comm:Group():lower() or "none")
+	local names = {}
+	for name in pairs(d.peers) do names[#names + 1] = name end
+	table.sort(names, function(a, b) return (d.peers[a].last or 0) > (d.peers[b].last or 0) end)
+	if #names == 0 then Bonfire:Print("  No other Bonfire users heard yet.") end
+	for i = 1, math.min(#names, 8) do
+		local p, parts = d.peers[names[i]], {}
+		for _, path in ipairs({ "CHANNEL", "SAY", "PARTY", "RAID", "WHISPER" }) do
+			parts[#parts + 1] = ("%s %d"):format(path:lower(), p.paths[path] or 0)
+		end
+		Bonfire:Printf("  %s (last %s ago): %s", ns.Short(names[i]), Ago(p.last or p.first), table.concat(parts, ", "))
+	end
+	for i = 1, math.min(#d.events, 12) do
+		Bonfire:Printf("  %s ago: %s", Ago(d.events[i][1]), d.events[i][2])
+	end
+end
+
+ns.AddCommand("report", "[clear] - the passive log: who your addon heard, how, and what happened", function(arg)
+	if strtrim(arg or ""):lower() == "clear" then
+		Bonfire.db.global.diag = nil
+		return Bonfire:Print("Passive log cleared.")
+	end
+	Log:Report()
+end)
+
 -- What a buff does, from its own description text ("Increases Strength by 5").
 local function Describe(aura)
 	local ok, text = pcall(C_Spell.GetSpellDescription, aura.spellId)
@@ -78,6 +160,9 @@ end)
 ns.AddCommand("status", "- channel, position and roll-parser check", function()
 	local x, y, mapID = LibStub("HereBeDragons-2.0"):GetPlayerZonePosition()
 	Bonfire:Printf("channel %s: %s", ns.Comm.CHANNEL, ns.Comm:ChannelId() and ("joined as /" .. ns.Comm:ChannelId()) or "not joined")
+	-- The channel is per realm and per faction: two players only share it if both of these match.
+	Bonfire:Printf("faction: %s   realm: %s   group: %s", tostring(UnitFactionGroup("player")), tostring(GetNormalizedRealmName()),
+		ns.Comm:Group() and ns.Comm:Group():lower() or "none")
 	Bonfire:Printf("position: map %s  %.1f, %.1f", tostring(mapID), (x or 0) * 100, (y or 0) * 100)
 	Bonfire:Printf("me: %s (%s)   last sender seen: %s", ns.Me(),
 		ns.Comm.selfSender and "learned from the channel" or "NOT learned yet", tostring(ns.Comm.lastSender))
@@ -86,7 +171,7 @@ ns.AddCommand("status", "- channel, position and roll-parser check", function()
 		comm.sent, comm.echoes, comm.received, comm.dropped, comm.bad)
 	for peer, info in pairs(comm.peers) do
 		peers = peers + 1
-		Bonfire:Printf("  Bonfire user heard: %s (%ds ago, via %s)", peer, now - info.at, tostring(info.via))
+		Bonfire:Printf("  Bonfire user heard: %s (%ds ago, via %s)", peer, now - info.at, ns.Comm:Paths(info, 300))
 	end
 	if peers == 0 then Bonfire:Print("  no other Bonfire users heard yet (try /bf ping)") end
 	local count = 0
@@ -120,7 +205,8 @@ ns.AddCommand("api", "- check the game APIs Bonfire uses exist in this client", 
 	local needed = {
 		"Ambiguate", "ChatFrame_RemoveChannel", "CreateFrame", "GetChannelName", "GetMoney",
 		"GetNormalizedRealmName", "GetNumGroupMembers", "GetPlayerTradeMoney", "GetServerTime",
-		"GetTargetTradeMoney", "GetTime", "InCombatLockdown", "InitiateTrade", "IsInRaid",
+		"GetTargetTradeMoney", "GetTime", "InCombatLockdown", "InitiateTrade", "IsInRaid", "IsInGroup", "UnitFactionGroup", "UnitIsGroupLeader", "UnitIsGroupAssistant",
+		"C_PartyInfo.InviteUnit", "C_PartyInfo.ConvertToRaid", "C_PartyInfo.LeaveParty", "AcceptGroup", "StaticPopup_Hide",
 		"IsShiftKeyDown", "JoinTemporaryChannel", "PlayMusic", "PlaySound", "PlaySoundFile",
 		"RandomRoll", "StopMusic", "UnitName", "tContains", "tinsert",
 		"C_AddOns.GetAddOnMetadata", "C_Container.GetContainerItemInfo", "C_Container.GetContainerNumSlots",
@@ -168,23 +254,44 @@ ns.AddCommand("find", "<text> - search the game's API names (e.g. trademoney)", 
 end)
 
 -- Ask everyone running Bonfire to say hello, then list who answered. Works without any table.
-ns.AddCommand("ping", "- find other Bonfire users on the channel", function()
-	ns.Comm:Broadcast("Q", {}, "ALERT")
-	if not ns.Comm:ChannelId() then
-		Bonfire:Print("Not connected to the Bonfire channel yet, so only people within earshot can hear this.")
+-- Hosts announce their fires in answer and everyone says hello with where they are, so it also
+-- fills the fire list and a host's list of players nearby (the spyglass in the window does this).
+-- With a name, it whispers just that player (and they whisper back), which works across layers
+-- and tells a channel problem apart from a player who isn't running Bonfire at all.
+function ns.Ping(name)
+	name = strtrim(name or "")
+	if name ~= "" then
+		local target = ns.FullName(name)
+		ns.Comm:Whisper(target, "Q")
+		Bonfire:Printf("Whispered %s (on another realm, add it: Name-Realm). Results in 6 seconds...", target)
+	else
+		ns.Comm:Broadcast("Q", {}, "ALERT")
+		if not ns.Comm:ChannelId() then
+			Bonfire:Print("Not connected to the Bonfire channel yet, so only people within earshot can hear this.")
+		end
+		Bonfire:Print("Asking who's out there, results in 6 seconds...")
 	end
-	Bonfire:Print("Asking who's out there, results in 6 seconds...")
 	C_Timer.After(6, function()
 		local now, n = GetTime(), 0
+		local groupOnly = false
 		for peer, info in pairs(ns.Comm.peers) do
 			if now - info.at < 10 then
 				n = n + 1
-				Bonfire:Printf("  %s answered (via %s)", peer, tostring(info.via))
+				local paths = ns.Comm:Paths(info, 10)
+				Bonfire:Printf("  %s answered (via %s)", peer, paths)
+				if not paths:find("CHANNEL", 1, true) and not paths:find("SAY", 1, true) then groupOnly = true end
 			end
 		end
-		if n == 0 then Bonfire:Print("  nobody answered. Same faction and layer? Do they have Bonfire and a joined channel (/bf status)?") end
+		if groupOnly then
+			Bonfire:Print("  Only your group or a whisper reached them: the Bonfire channel and /say didn't, so players who aren't grouped wouldn't find each other.")
+		end
+		if n == 0 then
+			Bonfire:Print("  nobody answered. Compare /bf status on both: same faction and realm? Try /bf ping <their name>, or group up and ping again.")
+		end
 	end)
-end)
+end
+
+ns.AddCommand("ping", "[name] - find other Bonfire users (with a name: whisper just them)", function(arg) ns.Ping(arg) end)
 
 -- What the game calls your character, so race and class lines can be matched to it.
 ns.AddCommand("whoami", "- your race and class as the game reports them", function()

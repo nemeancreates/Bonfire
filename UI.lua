@@ -274,6 +274,24 @@ local function Build()
 	Tooltip(buttons.fairYes, "They paid out what they held and ran the table straight.")
 	Tooltip(buttons.fairNo, "Something was off: money not paid out, or a table that didn't feel honest.")
 	Tooltip(buttons.paceSlow, "Games dragged: long waits between rolls or starts.")
+	-- An invite from a host: Join (or why not yet) on the left, No thanks on the right.
+	buttons.acceptInvite = Button(frame, "Join", 90, function()
+		local invite = UI.invite
+		if invite then Table:Join(invite.host) end
+	end)
+	buttons.declineInvite = Button(frame, "No thanks", 90, function()
+		UI.invite = nil
+		if UI.view == "invite" then UI.view = nil end
+		UI:Refresh()
+	end)
+	buttons.declineInvite:SetPoint("BOTTOMRIGHT", -12, 10)
+	buttons.report = Button(frame, "Report", 80, function() ns.Log:Report() end)
+	Tooltip(buttons.report, "Print the passive log in chat: which Bonfire users your addon heard, by which path, and what happened lately. It's always kept, and stays on this computer.")
+	buttons.settingsBack = Button(frame, "Back", 80, function()
+		UI.view = nil
+		UI:Refresh()
+	end)
+	buttons.settingsBack:SetPoint("BOTTOMRIGHT", -12, 10)
 	buttons.leave:SetPoint("BOTTOMRIGHT", -12, 10)
 	buttons.history:SetPoint("BOTTOMRIGHT", -12, 10)
 	Tooltip(buttons.history, "Your games, side bets and gold at Bonfire tables. Kept per character.")
@@ -352,6 +370,70 @@ local function Build()
 	end
 	UI.tableButton = ViewTab("Table", "table", 10)
 	UI.betsButton = ViewTab("Bets", "bets", 68)
+
+	-- The gear, left of the X: the settings page.
+	UI.gear = CreateFrame("Button", nil, frame)
+	UI.gear:SetSize(18, 18)
+	UI.gear:SetPoint("TOPRIGHT", -28, -3)
+	UI.gear:SetNormalTexture("Interface\\Icons\\INV_Misc_Gear_01")
+	UI.gear:SetHighlightTexture("Interface\\Buttons\\ButtonHilight-Square", "ADD")
+	UI.gear:SetScript("OnClick", function()
+		UI.view = UI.view ~= "settings" and "settings" or nil
+		UI:Refresh()
+	end)
+	Tooltip(UI.gear, "Settings")
+
+	-- The spyglass, left of the gear: ask every Bonfire user who can hear you to answer. Fills the
+	-- fire list and a host's list of players nearby, and says in chat who answered and how.
+	-- Rests 15 seconds between uses, so nobody can flood the channel with it.
+	UI.pingButton = CreateFrame("Button", nil, frame)
+	UI.pingButton:SetSize(18, 18)
+	UI.pingButton:SetPoint("RIGHT", UI.gear, "LEFT", -4, 0)
+	UI.pingButton:SetNormalTexture("Interface\\Icons\\INV_Misc_Spyglass_03")
+	UI.pingButton:SetHighlightTexture("Interface\\Buttons\\ButtonHilight-Square", "ADD")
+	UI.pingButton:SetScript("OnClick", function(self)
+		if GetTime() - (self.at or -100) < 15 then return end
+		self.at = GetTime()
+		self:SetAlpha(0.4)
+		C_Timer.After(15, function() self:SetAlpha(1) end)
+		ns.Ping()
+		if GetTime() - (ns.Beacon.lastHello or 0) > 5 then ns.Beacon:Hello() end
+		UI:Notice("Looking for Bonfire users nearby...")
+	end)
+	Tooltip(UI.pingButton, "Look for Bonfire users and fires nearby. Anyone who can hear you answers: hosts show up in the fire list, players in a host's invite list, and chat says who answered.")
+
+	-- The settings page: one switch a line, what it does in its tooltip.
+	local SETTINGS = {
+		{ "quips", "Quips", "Your character says a line and does an emote now and then, only on your own clicks in Bonfire." },
+		{ "chatTab", "Bonfire chat tab", "Bonfire's messages in their own chat tab instead of your main chat.", function(on) ns.Chat:SetTab(on) end },
+		{ "tableChat", "Table chat", "A chat channel for everyone at your table (Bonfire tells you its number when you sit down)." },
+		{ "pins", "Map pins", "Fires on your minimap and world map.", function(on) ns.Beacon:SetPins(on) end },
+		{ "askRating", "Ask how a table was", "After you've played at someone's table: paid out fair, and pace, one click each. Your answers build hosts' reputations." },
+		{ "autoInvite", "Invite players who click Join", "Hosting: whoever clicks Join is seated and invited to your group straight away. Off: they wait on your table page until you click Let in." },
+		{ "bigTables", "Tables of up to 10", "Hosting: up to 10 seats, your group turned into a raid past 5 (most quests don't give credit in a raid). Off: 5 seats, and the group stays a party.",
+			function() ns.Table:SetSeatLimit() end },
+	}
+	UI.settings = CreateFrame("Frame", nil, frame)
+	UI.settings:SetPoint("TOPLEFT", 12, -80)
+	UI.settings:SetSize(356, #SETTINGS * 28)
+	UI.settings:Hide()
+	UI.checks = {}
+	for i, s in ipairs(SETTINGS) do
+		local box = CreateFrame("CheckButton", nil, UI.settings, "UICheckButtonTemplate")
+		box:SetSize(26, 26)
+		box:SetPoint("TOPLEFT", 0, -(i - 1) * 28)
+		local label = UI.settings:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+		label:SetPoint("LEFT", box, "RIGHT", 4, 0)
+		label:SetText(s[2])
+		box:SetScript("OnClick", function(self)
+			local on = self:GetChecked() and true or false
+			Bonfire.db.global[s[1]] = on
+			if s[4] then s[4](on) end
+			UI:Refresh()
+		end)
+		Tooltip(box, s[3])
+		UI.checks[i] = { box = box, key = s[1] }
+	end
 	Tooltip(UI.tableButton, "The table and its game.")
 	Tooltip(UI.betsButton, function()
 		local t = ns.Table.current
@@ -386,6 +468,7 @@ local function HideUnused()
 	for _, b in pairs(buttons) do check(b) end
 	for _, b in ipairs(pickButtons) do check(b) end
 	check(stake)
+	check(UI.settings)
 end
 
 local function ClearRows()
@@ -445,6 +528,43 @@ local function ShowHistory()
 end
 
 -- How was the host's table? Asked once per visit when you leave or cash out; skippable.
+local function ShowSettings()
+	frame.header:SetText("Settings")
+	frame.sub:SetText("Hover a switch to see what it does. They apply to all your characters.")
+	for _, c in ipairs(UI.checks) do c.box:SetChecked(Bonfire.db.global[c.key] and true or false) end
+	Use(UI.settings)
+	LayoutLeft({ buttons.report })
+	Use(buttons.settingsBack)
+end
+
+-- The fire row's button says why you can't join rather than just greying out.
+local function JoinLabel(fire, near)
+	if fire.state == "settling" then return "Closing" end
+	if (fire.seats or 0) >= (fire.maxSeats or 0) then return "Full" end
+	if not near then return "Too far" end
+	return "Join"
+end
+
+-- A host invited you: what's on, how far, and Join (or why not yet) / No thanks.
+local function ShowInvite()
+	local host = UI.invite.host
+	local fire = ns.Beacon.fires[host]
+	local d = fire and ns.Beacon:Distance(fire)
+	local game = fire and ns.Games[fire.game]
+	frame.header:SetText(("%s invites you to their fire"):format(ns.Short(host)))
+	frame.sub:SetText(fire and ("%s, %s, %d/%d seated.  Host: %s"):format(game and game.name or "?", ns.Coins(fire.stake),
+		fire.seats or 0, fire.maxSeats or 0, ns.Broker:Badge(host)) or "")
+	frame.money:SetText(d and (d <= ns.Table.FOLD_RANGE and ("It's %d yd away: close enough to join."):format(d)
+		or ("It's %d yd away. Walk within %d yd to join."):format(d, ns.Table.FOLD_RANGE)) or "")
+	SetRow(2, "Joining adds you to their group, so the table")
+	SetRow(3, "can reach you. You leave it when you leave.")
+	local label = fire and JoinLabel(fire, d and d <= ns.Table.FOLD_RANGE) or "Join"
+	buttons.acceptInvite:SetText(label)
+	buttons.acceptInvite:SetEnabled(label == "Join")
+	LayoutLeft({ buttons.acceptInvite })
+	Use(buttons.declineInvite)
+end
+
 local function ShowRating()
 	local r = UI.rating
 	frame.header:SetText(("How was %s's table?"):format(ns.Short(r.host)))
@@ -484,8 +604,7 @@ local function ShowFires()
 			SetRow(i, ("%s %s  %s  %d/%d %s  %s  |cff999999%s|r"):format(
 					ns.Short(fire.host), ns.Broker:Badge(fire.host), game and game.name or "?", fire.seats or 0, fire.maxSeats or 0,
 					ns.StakeBadge(fire.stake), ns.Coins(fire.stake), fire.distance and ("%d yd"):format(fire.distance) or "far"),
-				"Join", function() ns.Table:Join(fire.host) end,
-				near and fire.state ~= "settling" and (fire.seats or 0) < (fire.maxSeats or 0))
+				JoinLabel(fire, near), function() ns.Table:Join(fire.host) end, JoinLabel(fire, near) == "Join")
 		end
 	end
 	RefreshStake()
@@ -683,7 +802,10 @@ local function ShowTable(t)
 	local owed = {}
 	for _, p in ipairs(payouts) do owed[p[1]] = p[2] end
 
-	local badge = hosting and "" or (" " .. ns.Broker:Badge(t.host))
+	-- Players see the host's reputation; a host with practice players at a gold table is told
+	-- nobody else can see it.
+	local badge = hosting and ((t.stake > 0 and Table:HasBots()) and " |cffff6666practice, hidden|r" or "")
+		or (" " .. ns.Broker:Badge(t.host))
 	frame.header:SetText(("%s's fire%s  |cffffffff%s|r %s"):format(ns.Short(t.host), badge, game and game.name or "?", ns.StakeBadge(t.stake)))
 	frame.sub:SetText(Subtitle(t))
 	frame.money:SetText(MoneyLine(t))
@@ -730,6 +852,33 @@ local function ShowTable(t)
 		if not listed[p[1]] then
 			n = n + 1
 			SetRow(n, ("%s  |cff888888(left)|r  owed %s"):format(Name(p[1]), ns.Coins(p[2])), hosting and "Pay" or nil, Trade(p[1]))
+		end
+	end
+
+	-- Host with room at the table: Bonfire users nearby who aren't at a table, with Invite.
+	local open = hosting and t.state ~= "settling" and #t.seats < t.maxSeats and not (t.stake > 0 and Table:HasBots())
+	local requests = open and Table:Requests() or {}
+	local asking = {}
+	for _, r in ipairs(requests) do asking[r.name] = true end
+	local nearby = open and ns.Beacon:Nearby(60) or {}
+	local shown = {}
+	for _, p in ipairs(nearby) do
+		if not listed[p.name] and not asking[p.name] then shown[#shown + 1] = p end
+	end
+	if (#requests > 0 or #shown > 0) and n + 2 <= ROWS then
+		n = n + 1
+		SetRow(n, "|cff999999Bonfire players nearby|r")
+		for _, r in ipairs(requests) do
+			if n >= ROWS then break end
+			n = n + 1
+			SetRow(n, ("%s   |cffffd100asks to join|r"):format(ns.Short(r.name)), "Let in", function() Table:LetIn(r.name) end)
+		end
+		for _, p in ipairs(shown) do
+			if n >= ROWS then break end
+			n = n + 1
+			local invited = Table:WasInvited(p.name)
+			SetRow(n, ("%s   |cff999999%s|r"):format(ns.Short(p.name), p.distance and ("%d yd"):format(p.distance) or "nearby"),
+				invited and "Invited" or "Invite", function() Table:InvitePlayer(p.name) end, not invited)
 		end
 	end
 
@@ -829,12 +978,15 @@ local function Draw()
 	local r = UI.rating
 	if r and (GetTime() - r.at > 900 or (t and t.host ~= r.host)) then UI.rating, r = nil, nil end
 	if UI.view == "rate" and not r then UI.view = nil end
+	if UI.invite and (t or GetTime() - UI.invite.at > 120) then UI.invite = nil end
+	if UI.view == "invite" and not UI.invite then UI.view = nil end
 	local inBets = UI.view == "bets"
 	-- The tab you're on shows in gold.
 	UI.tableButton:SetText(inBets and "Table" or "|cffffd100Table|r")
 	UI.betsButton:SetText(inBets and "|cffffd100Bets|r" or "Bets")
 	-- The game picker: on the main menu, and at your own table between games.
-	local pickable = not inBets and UI.view ~= "history" and UI.view ~= "rate" and (not t or (ns.Table:IsHosting() and t.state == "open"))
+	local pickable = not inBets and UI.view ~= "history" and UI.view ~= "rate" and UI.view ~= "invite" and UI.view ~= "settings"
+		and (not t or (ns.Table:IsHosting() and t.state == "open"))
 	UI.gameButton:SetShown(pickable)
 	if pickable then
 		UI.gameButton:SetText(("Game: |cffffd100%s|r  v"):format(ns.GameName(t and t.game or ns.ChosenGame())))
@@ -849,7 +1001,9 @@ local function Draw()
 		return
 	end
 	ns.BetsUI:Hide()
+	if UI.view == "settings" then return ShowSettings() end
 	if UI.view == "rate" then return ShowRating() end
+	if UI.view == "invite" then return ShowInvite() end
 	if UI.view == "history" then return ShowHistory() end
 	if t then ShowTable(t) else ShowFires() end
 end
@@ -908,11 +1062,26 @@ function UI:Show()
 	if not frame then Build() end
 	frame:Show()
 	self:Refresh()
+	-- Opening Bonfire tells hosts nearby you're around, so they can invite you.
+	if GetTime() - (ns.Beacon.lastHello or 0) > 10 then ns.Beacon:Hello() end
+end
+
+-- A host invited us to their fire: the window opens on the invite (it's for you, from a player).
+function UI:ShowInvite(host)
+	UI.invite = { host = host, at = GetTime() }
+	UI.view = "invite"
+	Bonfire:Printf("%s invites you to their fire. /bf to answer.", ns.Short(host))
+	self:Show()
 end
 
 function UI:Toggle()
 	if frame and frame:IsShown() then frame:Hide() else self:Show() end
 end
+
+ns.AddCommand("settings", "- Bonfire's settings (also the gear in the window's title bar)", function()
+	UI.view = "settings"
+	UI:Show()
+end)
 
 ns.AddCommand("reset", "- put the Bonfire window back at its default spot", function()
 	Bonfire.db.global.pos, Bonfire.db.global.rangePos = nil, nil

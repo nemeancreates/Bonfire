@@ -5,11 +5,14 @@ local Pins = LibStub("HereBeDragons-Pins-2.0")
 
 -- Open tables announce where they are; everyone else keeps a list and pins them
 -- on the minimap and world map. Stands in for the campfire smoke trail the game lacks.
-local Beacon = { fires = {} }  -- host -> { mapID, x, y, game, seats, maxSeats, state, stake, seen }
+local Beacon = { fires = {}, players = {} }  -- host -> { mapID, x, y, game, seats, maxSeats, state, stake, seen }
+-- players: Bonfire users heard saying hello -> { at, mapID, x, y, seated, say (heard over /say) }
 ns.Beacon = Beacon
 
 local EXPIRE = 95          -- seconds without a beacon before a fire drops off
 local ANNOUNCE_EVERY = 30
+local HELLO_EVERY = 60     -- seconds between the hello every client sends
+local PLAYER_FRESH = 150   -- seconds a player stays in the nearby list after their last hello
 local NEARBY = 60          -- yards: close enough to say a fire is nearby
 local ICON = "Interface\\Icons\\Spell_Fire_Fire"
 
@@ -52,6 +55,7 @@ function Beacon:Enable()
 	ns.Comm.On("B", function(d, sender) self:OnBeacon(d, sender) end)
 	ns.Comm.On("X", function(_, sender) self:Remove(sender) end)
 	ns.Comm.On("Q", function() self:OnQuery() end)
+	ns.Comm.On("HI", function(d, sender, distribution) self:OnHello(d, sender, distribution) end)
 	Bonfire:ScheduleRepeatingTimer(function() self:Tick() end, 5)
 	-- Ask who's already out there once the channel is up.
 	C_Timer.After(15, function() ns.Comm:Broadcast("Q", {}, "BULK") end)
@@ -74,15 +78,66 @@ function Beacon:Visibility()
 	return "you aren't hosting a fire."
 end
 
+-- Our table as a beacon: where the fire is and what's on. (Also sent with a host's invite.)
+function Beacon:TableData()
+	local t = ns.Table.current
+	return {
+		m = t.fire[1], x = floor(t.fire[2] * 10000), y = floor(t.fire[3] * 10000),
+		g = t.game, s = #t.seats, n = t.maxSeats, st = t.state, a = t.stake,
+	}
+end
+
 function Beacon:Announce()
 	local t = ns.Table.current
 	if not t or t.host ~= ns.Me() then return end
 	if t.stake > 0 and ns.Table:HasBots() then return end  -- practice gold tables stay off the map
 	self.lastAnnounce = GetTime()
-	ns.Comm:Broadcast("B", {
-		m = t.fire[1], x = floor(t.fire[2] * 10000), y = floor(t.fire[3] * 10000),
-		g = t.game, s = #t.seats, n = t.maxSeats, st = t.state, a = t.stake,
+	ns.Comm:Broadcast("B", self:TableData(), "BULK")
+end
+
+-- Every client says hello each minute (and when its window opens): where it is and whether it's
+-- at a table. Hosts list the ones nearby with an Invite button, and the Honest Broker trades
+-- notes with them. It goes out on every path we have, since on a megaserver the realm channel
+-- doesn't reach everyone.
+function Beacon:Hello()
+	local x, y, mapID = HBD:GetPlayerZonePosition()
+	self.lastHello = GetTime()
+	ns.Comm:Broadcast("HI", {
+		m = mapID, x = x and floor(x * 10000), y = y and floor(y * 10000), s = ns.Table.current and 1 or nil,
 	}, "BULK")
+end
+
+function Beacon:OnHello(d, sender, distribution)
+	if sender == ns.Me() then return end
+	local p = self.players[sender] or {}
+	self.players[sender] = p
+	p.at, p.seated, p.say = GetTime(), d.s == 1, p.say or distribution == "SAY"
+	if type(d.m) == "number" and type(d.x) == "number" and type(d.y) == "number" then
+		p.mapID, p.x, p.y = d.m, d.x / 10000, d.y / 10000
+	end
+	-- Someone we haven't greeted: say hello back, so both sides know at once (at most every 10 s).
+	if not p.greeted and GetTime() - (self.lastHello or 0) > 10 then
+		p.greeted = true
+		self:Hello()
+	end
+	ns.UI:Refresh()
+end
+
+-- Bonfire users heard lately who aren't at a table, within `yards` (or heard over /say when
+-- their position can't be compared), nearest first.
+function Beacon:Nearby(yards)
+	local list = {}
+	for name, p in pairs(self.players) do
+		if GetTime() - p.at < PLAYER_FRESH and not p.seated then
+			local d = p.mapID and self:Distance(p)
+			if (d and d <= yards) or (not d and p.say) then
+				p.name, p.distance = name, d
+				list[#list + 1] = p
+			end
+		end
+	end
+	table.sort(list, function(a, b) return (a.distance or math.huge) < (b.distance or math.huge) end)
+	return list
 end
 
 -- A campfire you placed with no table at it is still worth showing on everyone's map.
@@ -99,9 +154,11 @@ function Beacon:AnnounceFire()
 end
 
 function Beacon:OnQuery()
-	-- Spread replies out so a query doesn't trigger a burst from every host at once.
+	-- Spread replies out so a query doesn't trigger a burst from every host at once. Everyone
+	-- also says hello (where they are), which fills the asker's list of players nearby.
 	C_Timer.After(math.random() * 4, function()
 		if ns.Table.current then self:Announce() else self:AnnounceFire() end
+		if GetTime() - (self.lastHello or 0) > 10 then self:Hello() end
 	end)
 end
 
@@ -150,6 +207,7 @@ function Beacon:Tick()
 	for host, fire in pairs(self.fires) do
 		if now - fire.seen > EXPIRE or (fire.ends and GetServerTime() > fire.ends) then self:Remove(host) end
 	end
+	if now - (self.lastHello or 0) >= HELLO_EVERY then self:Hello() end
 	if now - (self.lastAnnounce or 0) >= ANNOUNCE_EVERY then
 		if not ns.Table.current then
 			self:AnnounceFire()

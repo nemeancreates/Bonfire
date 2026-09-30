@@ -32,6 +32,20 @@ local REMATCH_WINDOW = 5    -- seconds after a game before the host can rematch,
 local FIRE_GONE_AFTER = 20  -- seconds without the campfire buff, at the fire, before we call it out
 
 local counted = {}  -- game id -> true once it's in your stats
+local InGroupWith   -- defined with the invites below
+
+-- A line in the passive log (Debug.lua), when it's loaded and on.
+local function Note(...)
+	if ns.Log then ns.Log:Note(...) end
+end
+
+-- Group calls live in C_PartyInfo in this client; older names as a fallback. False if missing or
+-- refused.
+local function PartyCall(name, ...)
+	local fn = (C_PartyInfo and C_PartyInfo[name]) or _G[name]
+	if not fn then return false end
+	return (pcall(fn, ...))
+end
 
 local function RemoveValue(list, value)
 	for i = #list, 1, -1 do
@@ -148,6 +162,17 @@ function Table:Enable()
 	ns.Comm.On("OP", function(d, sender) self:OnOddPick(d, sender) end)
 	ns.Comm.On("OPK", function(d, sender) self:OnPickNote(d, sender) end)
 	ns.Comm.On("R", function(_, sender) self:OnFullRequest(sender) end)
+	ns.Comm.On("IV", function(d, sender) self:OnInvited(d, sender) end)
+	ns.Comm.On("JW", function(_, sender)
+		if self.pendingJoin == sender then
+			Bonfire:Printf("Asked %s to join. They let players in by hand, so it may take a moment.", ns.Short(sender))
+		end
+	end)
+	ns.OnEvent("PARTY_INVITE_REQUEST", function(_, inviter) self:OnPartyInvite(inviter) end)
+	-- Someone joined the table's group: the state now reaches them over it, so send it.
+	ns.OnEvent("GROUP_ROSTER_UPDATE", function()
+		if self:IsHosting() and self:RealPlayers() > 1 then self:Push() end
+	end)
 	ns.OnEvent("CHAT_MSG_SYSTEM", function(_, msg) self:OnSystemMessage(msg) end)
 	ns.OnEvent("UNIT_SPELLCAST_SUCCEEDED", function(_, unit, _, spellID) self:OnCast(unit, spellID) end)
 	-- Count the kits just before a campfire spell goes off, to tell placing from crafting.
@@ -275,7 +300,7 @@ function Table:Host(anywhere)
 	self.game, self.sentMv, self.lastState = nil, nil, nil
 	self.sawAura, self.noAuraSince = false, nil
 	self.current = {
-		host = ns.Me(), game = ns.ChosenGame(), stake = ns.StakeCopper(), maxSeats = MAX_SEATS, state = "open",
+		host = ns.Me(), game = ns.ChosenGame(), stake = ns.StakeCopper(), maxSeats = self:SeatLimit(), state = "open",
 		seats = { ns.Me() }, fire = { mapID, x, y }, ends = GetServerTime() + FIRE_LIFETIME,
 	}
 	Ledger.Init(self.current)
@@ -537,17 +562,46 @@ function Table:Restore()
 	ns.Beacon:Announce()
 end
 
-function Table:OnJoin(sender)
+-- Seats a new table has: 10 (the group a raid past five), or 5 so it stays a party (settings).
+function Table:SeatLimit()
+	return Bonfire.db.global.bigTables and MAX_SEATS or 5
+end
+
+-- The seats setting changed: an open table follows it (never below who's already seated).
+function Table:SetSeatLimit()
+	local t = self.current
+	if not self:IsHosting() then return end
+	t.maxSeats = math.max(#t.seats, self:SeatLimit())
+	self:Push()
+	ns.Beacon:Announce()
+end
+
+-- approved: the host let them in by hand (settings: invites off).
+function Table:OnJoin(sender, approved)
 	local t = self.current
 	if not self:IsHosting() then return ns.Comm:Whisper(sender, "N", { r = "that fire is out" }) end
 	if tContains(t.seats, sender) then return self:Push() end
 	if t.state == "settling" or t.closing then return ns.Comm:Whisper(sender, "N", { r = "the fire is dying" }) end
 	if t.stake > 0 and self:HasBots() then return ns.Comm:Whisper(sender, "N", { r = "this is a practice table" }) end
 	if #t.seats >= t.maxSeats then return ns.Comm:Whisper(sender, "N", { r = "the table is full" }) end
+	if not approved and not Bonfire.db.global.autoInvite and not self:IsBot(sender) then
+		-- Letting players in by hand: they wait on the table page with a Let in button.
+		self.requests = self.requests or {}
+		if not self.requests[sender] then
+			Bonfire:Printf("%s asks to join your table. Let them in from the table page.", ns.Short(sender))
+			ns.Comm:Whisper(sender, "JW")
+		end
+		self.requests[sender] = GetTime()
+		Note("%s asked to join (waiting to be let in)", ns.Short(sender))
+		return ns.UI:Refresh()
+	end
+	if self.requests then self.requests[sender] = nil end
+	Note("%s sat down at our table", ns.Short(sender))
 	t.seats[#t.seats + 1] = sender
 	t.left[sender] = nil  -- back again: any credit is theirs to play with
 	self.sentMv = nil     -- the newcomer needs the whole side-bet card
 	ns.Broker:Met(sender) -- and you trade what you know about hosts
+	self:GroupInvite(sender)
 	self:Push()
 	ns.Beacon:Announce()
 end
@@ -1409,16 +1463,138 @@ end
 
 function Table:StartVisit(t)
 	self.visit = { host = t.host, games = 0 }
+	Note("seated at %s's table", ns.Short(t.host))
 	ns.Broker:Met(t.host)
 end
 
 function Table:EndVisit(t)
 	local v = self.visit
 	self.visit = nil
+	-- The group we joined just for this table goes when the table does.
+	if self.joinedGroup and t and ns.NameKey(self.joinedGroup) == ns.NameKey(t.host) then
+		self.joinedGroup = nil
+		if PartyCall("LeaveParty") then Bonfire:Printf("Left %s's group.", ns.Short(t.host)) end
+	end
 	if not v or not t or v.host ~= t.host then return end
 	local held = t.stake > 0 and Ledger.Balance(t, ns.Me()) or 0
 	if held > 0 then ns.Broker:Owed(t.host, held) end
 	if v.games > 0 and not v.rated then ns.UI:AskRating(t.host) end
+end
+
+-- Invites -------------------------------------------------------------------------
+-- On a megaserver the realm channel doesn't reach everyone, but a group always works, so a table
+-- becomes a group: whoever sits down gets a party invite from the host (a raid once it's past
+-- five), and their addon accepts it because they asked to join. Hosts can also invite Bonfire
+-- users nearby; they get a page with Join and No thanks.
+
+-- Is this player in our party or raid?
+function InGroupWith(name)
+	local key, raid = ns.NameKey(name), IsInRaid()
+	for i = 1, GetNumGroupMembers() do
+		if ns.NameKey(UnitName(raid and ("raid" .. i) or ("party" .. i))) == key then return true end
+	end
+	return false
+end
+
+-- Host: a party invite for someone who just sat down, making room with a raid past five.
+function Table:GroupInvite(name)
+	if self:IsBot(name) or InGroupWith(name) then return end
+	local home = LE_PARTY_CATEGORY_HOME
+	local grouped, raid = IsInGroup(home), IsInRaid(home)
+	if grouped and not UnitIsGroupLeader("player") and not (raid and UnitIsGroupAssistant("player")) then
+		Note("couldn't invite %s: we aren't the group's leader", ns.Short(name))
+		return Bonfire:Printf("%s sat down. Only your group's leader can invite them, so ask the leader to.", ns.Short(name))
+	end
+	-- Invites still out count toward the five a party holds.
+	self.invitesOut = self.invitesOut or {}
+	local pending = 0
+	for who, at in pairs(self.invitesOut) do
+		if GetTime() - at > 60 or InGroupWith(who) then self.invitesOut[who] = nil else pending = pending + 1 end
+	end
+	local function send()
+		self.invitesOut[name] = GetTime()
+		if PartyCall("InviteUnit", name) then
+			Note("sent %s a party invite", ns.Short(name))
+		else
+			Note("couldn't send %s a party invite", ns.Short(name))
+			Bonfire:Printf("Couldn't invite %s to your group. Invite them by hand (right-click their name).", ns.Short(name))
+		end
+	end
+	if grouped and not raid and GetNumGroupMembers() + pending >= 5 then
+		if not Bonfire.db.global.bigTables then
+			return Bonfire:Printf("Your group is full, so %s can't join it. (Tables of up to 10 are off in settings.)", ns.Short(name))
+		end
+		Note("made the group a raid to fit %s", ns.Short(name))
+		PartyCall("ConvertToRaid")
+		Bonfire:Print("Your table's group is now a raid, to fit everyone. (Most quests don't give credit in a raid.)")
+		C_Timer.After(1, send)  -- the raid takes a moment to form
+	else
+		send()
+	end
+end
+
+-- Host: invite a Bonfire user nearby. They get a page to Join or say no; the party invite
+-- follows when they Join.
+function Table:InvitePlayer(name)
+	local t = self.current
+	if not self:IsHosting() then return end
+	if #t.seats >= t.maxSeats then return self:Refuse("Your table is full.") end
+	if t.stake > 0 and self:HasBots() then return self:Refuse("Practice players are at this gold table, so real players can't join it (/bf dummy clear).") end
+	self.invited = self.invited or {}
+	self.invited[name] = GetTime()
+	ns.Comm:Whisper(name, "IV", ns.Beacon:TableData())  -- where the fire is and what's on
+	Note("invited %s to our fire", ns.Short(name))
+	Bonfire:Printf("Invited %s to your fire.", ns.Short(name))
+	ns.UI:Refresh()
+end
+
+-- Host: let in a player who asked to join (settings: invites off).
+function Table:LetIn(name)
+	if self.requests then self.requests[name] = nil end
+	self:OnJoin(name, true)
+end
+
+-- Players waiting to be let in, oldest first (requests go stale after two minutes).
+function Table:Requests()
+	local list = {}
+	for name, at in pairs(self.requests or {}) do
+		if GetTime() - at < 120 then list[#list + 1] = { name = name, at = at } end
+	end
+	table.sort(list, function(a, b) return a.at < b.at end)
+	return list
+end
+
+-- Recently invited (the host's Invite button waits a bit before it can be pressed again).
+function Table:WasInvited(name)
+	local at = self.invited and self.invited[name]
+	return at and GetTime() - at < 30
+end
+
+-- Player: a host invited us. Their fire goes in our list (even if their beacon never reached us)
+-- and the window asks us.
+function Table:OnInvited(d, sender)
+	Note("%s invited us to their fire%s", ns.Short(sender), self.current and " (already at a table)" or "")
+	if self.current then return end
+	ns.Beacon:OnBeacon(d, sender)
+	ns.UI:ShowInvite(sender)
+end
+
+-- Player: a party invite. Accept it if it's from the host we asked to join (or are sitting with).
+function Table:OnPartyInvite(inviter)
+	if type(inviter) ~= "string" or (issecretvalue and issecretvalue(inviter)) then return end
+	local t, asked = self.current, self.askedJoin
+	local host = (t and not self:IsHosting() and t.host) or (asked and GetTime() - asked.at < 120 and asked.host)
+	if not host or ns.NameKey(inviter) ~= ns.NameKey(host) then
+		return Note("party invite from %s: left for you to answer (not a host we asked)", inviter)
+	end
+	if PartyCall("AcceptGroup") then
+		pcall(StaticPopup_Hide, "PARTY_INVITE")
+		self.joinedGroup = host
+		Note("accepted %s's party invite", ns.Short(host))
+		Bonfire:Printf("Joined %s's group for the table.", ns.Short(host))
+	else
+		Note("couldn't accept %s's party invite", ns.Short(host))
+	end
 end
 
 -- Player side ----------------------------------------------------------------
@@ -1433,6 +1609,12 @@ function Table:Join(host)
 		return Bonfire:Printf("Walk over to %s's fire first (within %d yd).", ns.Short(host), self.FOLD_RANGE)
 	end
 	self.pendingJoin = host
+	self.askedJoin = { host = host, at = GetTime() }
+	Note("asked %s to join their table", ns.Short(host))
+	local home = LE_PARTY_CATEGORY_HOME
+	if IsInGroup(home) and not InGroupWith(host) then
+		Bonfire:Printf("You're in a group, so %s's party invite can't reach you. Leave your group to play at their table.", ns.Short(host))
+	end
 	ns.Comm:Whisper(host, "J")
 end
 

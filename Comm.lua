@@ -10,7 +10,7 @@ local handlers = {}
 
 -- Discovery messages also go out on SAY, which needs no channel: everyone within earshot
 -- running Bonfire hears them even if the shared channel isn't connecting us.
-local DISCOVERY = { H = true, Q = true, B = true, X = true }
+local DISCOVERY = { H = true, Q = true, B = true, X = true, HI = true }
 
 -- Diagnostics for /bf status and /bf ping: what we've sent and heard, and from whom. dropped
 -- counts pieces of our messages the game refused to send; bad counts messages we threw away.
@@ -55,8 +55,12 @@ function Comm:Enable()
 	end)
 	-- Anyone asking who's out there gets a hello back, so newcomers see every other user
 	-- whether or not they're hosting.
-	self.On("Q", function()
-		C_Timer.After(math.random() * 4, function() self:Broadcast("H", {}, "BULK") end)
+	-- A question whispered to us (/bf ping <name>) is answered by whisper, so it tests that path alone.
+	self.On("Q", function(_, sender, distribution)
+		C_Timer.After(math.random() * 4, function()
+			if distribution == "WHISPER" then return self:Whisper(sender, "H") end
+			self:Broadcast("H", {}, "BULK")
+		end)
 	end)
 	-- A message can arrive twice (channel and SAY); the copies land within moments of each other.
 	Bonfire:ScheduleRepeatingTimer(function() self.seen = {} end, 60)
@@ -71,6 +75,9 @@ end
 function Comm:JoinChannel()
 	if self:ChannelId() then return end
 	JoinTemporaryChannel(self.CHANNEL)
+	C_Timer.After(3, function()
+		if ns.Log then ns.Log:Note(self:ChannelId() and ("joined the Bonfire channel as /" .. self:ChannelId()) or "couldn't join the Bonfire channel") end
+	end)
 	-- Players never type here; keep it out of the chat windows.
 	C_Timer.After(1, function()
 		if not ChatFrame_RemoveChannel then return end
@@ -86,23 +93,36 @@ function Comm:ChannelId()
 	return id and id > 0 and id or nil
 end
 
--- sent(done, total, ok) is called as each piece goes out (see SendLatest).
+-- Your party or raid, if you're in one (not a queued instance group).
+function Comm:Group()
+	local home = LE_PARTY_CATEGORY_HOME
+	if IsInRaid(home) then return "RAID" end
+	if IsInGroup(home) then return "PARTY" end
+end
+
+-- Everything goes on the realm channel. Discovery also goes out on SAY, which needs no channel.
+-- In a party or raid it goes to the group as well, so friends playing together hear each other
+-- even when the channel doesn't join them (it's per realm and per faction). Copies are dropped
+-- on arrival. sent(done, total, ok) is called as each piece goes out (see SendLatest).
 function Comm:Broadcast(kind, data, prio, sent)
-	local id = self:ChannelId()
-	if not id and not DISCOVERY[kind] then return false end
+	local id, group = self:ChannelId(), self:Group()
+	if not id and not group and not DISCOVERY[kind] then return false end
 	self.seq = (self.seq or 0) + 1
 	data.k, data.i, data.n = kind, self.id, self.seq
 	local text = Comm.Seal(Bonfire:Serialize(data))
 	self.sent = self.sent + 1
+	local function track(_, done, total, ok) sent(done, total, ok) end
 	if id then
-		Bonfire:SendCommMessage(self.PREFIX, text, "CHANNEL", tostring(id), prio or "NORMAL", sent and function(_, done, total, ok)
-			sent(done, total, ok)
-		end)
+		Bonfire:SendCommMessage(self.PREFIX, text, "CHANNEL", tostring(id), prio or "NORMAL", sent and track)
+	end
+	if group then
+		-- Tracked here only when there's no channel send to track.
+		pcall(Bonfire.SendCommMessage, Bonfire, self.PREFIX, text, group, nil, prio or "NORMAL", (sent and not id) and track or nil)
 	end
 	if DISCOVERY[kind] then
 		pcall(Bonfire.SendCommMessage, Bonfire, self.PREFIX, text, "SAY", nil, "BULK")
 	end
-	return id ~= nil
+	return id ~= nil or group ~= nil
 end
 
 -- For a message that replaces whatever was sent before it (the table state): only the newest
@@ -133,6 +153,7 @@ function Comm:SendLatest(kind, make, prio, dropped)
 			if not slot.failed and slot.dropped then slot.dropped() end
 			slot.failed = true
 			self.dropped = self.dropped + 1
+			if ns.Log then ns.Log:Note("the game dropped part of a %s message; resending", kind) end
 		end
 		if done >= total then self:LatestSent(kind, slot) end
 	end)
@@ -152,12 +173,14 @@ function Comm:LatestSent(kind, slot)
 	end
 end
 
--- Only to whoever is within /say range (the Honest Broker's hello), never the channel.
-function Comm:Say(kind, data)
-	self.seq = (self.seq or 0) + 1
-	data.k, data.i, data.n = kind, self.id, self.seq
-	self.sent = self.sent + 1
-	pcall(Bonfire.SendCommMessage, Bonfire, self.PREFIX, Comm.Seal(Bonfire:Serialize(data)), "SAY", nil, "BULK")
+-- The paths a player was heard on within the last `within` seconds, e.g. "PARTY, SAY".
+function Comm:Paths(peer, within)
+	local list = {}
+	for path, at in pairs(peer.paths or {}) do
+		if GetTime() - at <= within then list[#list + 1] = path end
+	end
+	table.sort(list)
+	return #list > 0 and table.concat(list, ", ") or tostring(peer.via)
 end
 
 function Comm:Whisper(target, kind, data)
@@ -174,6 +197,7 @@ function Comm:Receive(payload, distribution, sender)
 	-- Every message says what it is and which client sent it; anything else is damaged.
 	if not ok or type(data) ~= "table" or type(data.k) ~= "string" or type(data.i) ~= "string" then
 		self.bad = self.bad + 1
+		if ns.Log then ns.Log:Note("threw away a damaged message from %s via %s", tostring(sender), tostring(distribution)) end
 		return
 	end
 	if data.i == self.id then
@@ -181,6 +205,13 @@ function Comm:Receive(payload, distribution, sender)
 		self.echoes = self.echoes + 1
 		return
 	end
+	sender = ns.FullName(sender)
+	-- Every path we've heard this player on (channel, SAY, party, whisper), noted before the
+	-- duplicate check so /bf ping can say which ones actually reach.
+	local peer = self.peers[sender] or { paths = {} }
+	self.peers[sender] = peer
+	peer.at, peer.via, peer.paths[distribution] = GetTime(), distribution, GetTime()
+	if ns.Log then ns.Log:Heard(sender, distribution, data.k) end
 	if data.n then
 		local key = data.i .. ":" .. data.n
 		if self.seen[key] then return end
@@ -188,11 +219,12 @@ function Comm:Receive(payload, distribution, sender)
 	end
 	self.lastSender = sender
 	self.received = self.received + 1
-	sender = ns.FullName(sender)
-	self.peers[sender] = { at = GetTime(), via = distribution }
 	-- One handler tripping over an odd message mustn't stop the others hearing it.
 	for _, fn in ipairs(handlers[data.k] or {}) do
 		local fine, err = pcall(fn, data, sender, distribution)
-		if not fine then geterrorhandler()(err) end
+		if not fine then
+			if ns.Log then ns.Log:Note("error handling %s from %s: %s", data.k, ns.Short(sender), tostring(err):sub(1, 120)) end
+			geterrorhandler()(err)
+		end
 	end
 end

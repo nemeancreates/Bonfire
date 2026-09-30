@@ -17,7 +17,9 @@ read_globals = {
 	"CreateFrame", "GameTooltip", "GameTooltip_Hide", "GetBuildInfo", "GetChannelName",
 	"GetMoney", "GetNormalizedRealmName", "GetNumGroupMembers",
 	"GetPlayerTradeMoney", "GetServerTime", "GetTargetTradeMoney", "GetTime", "InitiateTrade",
-	"IsInRaid", "IsShiftKeyDown", "JoinTemporaryChannel", "PlayMusic", "PlaySound", "PlaySoundFile",
+	"IsInRaid", "IsInGroup", "LE_PARTY_CATEGORY_HOME", "UnitFactionGroup",
+	"C_PartyInfo", "AcceptGroup", "StaticPopup_Hide", "UnitIsGroupLeader", "UnitIsGroupAssistant",
+	"IsShiftKeyDown", "JoinTemporaryChannel", "PlayMusic", "PlaySound", "PlaySoundFile",
 	"RandomRoll", "StopMusic", "UnitGUID", "UnitName", "issecretvalue",
 	-- FrameXML globals and constants
 	"C_TradeInfo", "MoneyInputFrame_SetCopper", "TradePlayerInputMoneyFrame",

@@ -53,7 +53,8 @@ local hbd = {
 function LibStub() return hbd end
 
 local Bonfire = {
-	db = { global = { stats = { played = 0, won = 0 }, stake = { total = 0, confirmed = 0 }, betCut = 5, bet = { amount = 5, unit = 2, total = 0 } }, char = {} },
+	db = { global = { stats = { played = 0, won = 0 }, stake = { total = 0, confirmed = 0 }, betCut = 5, bet = { amount = 5, unit = 2, total = 0 },
+		quips = true, tableChat = true, askRating = true, autoInvite = true, bigTables = true }, char = {} },
 }
 -- Stands in for AceSerializer: the same value always gives the same text.
 local function serialize(v)
@@ -84,15 +85,18 @@ ns.BetReady = function() return true end
 ns.ChosenGame = function() return chosen end
 ns.AtCampfire = function() return true end
 ns.CampfireBuff = function() return true end
-local asked, owed, received = {}, {}, {}
+local asked, owed, received, shownInvites = {}, {}, {}, {}
 ns.UI = { Refresh = function() end, Notice = function() end, Show = function() end,
-	AskRating = function(_, host, seated) asked[#asked + 1] = { host, seated } end }
+	AskRating = function(_, host, seated) asked[#asked + 1] = { host, seated } end,
+	ShowInvite = function(_, host) shownInvites[#shownInvites + 1] = host end }
 ns.Broker = {
 	Met = function() end, Rate = function() end,
 	Owed = function(_, host, copper) owed[#owed + 1] = { host, copper } end,
 	Received = function(_, partner, copper) received[#received + 1] = { partner, copper } end,
 }
-ns.Beacon = { Announce = function() end, Remove = function() end, fires = {}, Distance = function() return 5 end }
+ns.Beacon = { Announce = function() end, Remove = function() end, fires = {}, Distance = function() return 5 end,
+	TableData = function() return { m = 1, x = 5000, y = 5000 } end,
+	OnBeacon = function(self, d, sender) self.fires[sender] = { state = "open", seats = 1, maxSeats = 10, d = d } end }
 ns.Comm = {
 	selfSender = hostSeat, On = function() end, ChannelId = function() return 1 end,
 	Broadcast = function() return true end, Whisper = function() end,
@@ -106,6 +110,23 @@ ns.Trade = {}
 
 function SendChatMessage() end
 function DoEmote() end
+
+-- Groups: a stand-in party, and a record of what the addon asked the game to do with it.
+LE_PARTY_CATEGORY_HOME = 1
+local group = { size = 0, raid = false, leader = true }
+local partyCalls = {}
+function IsInGroup() return group.size > 0 end
+function IsInRaid() return group.raid end
+function GetNumGroupMembers() return group.size end
+function UnitIsGroupLeader() return group.leader end
+function UnitIsGroupAssistant() return false end
+C_PartyInfo = {
+	InviteUnit = function(name) partyCalls[#partyCalls + 1] = "invite " .. name end,
+	ConvertToRaid = function() partyCalls[#partyCalls + 1] = "raid"; group.raid = true end,
+	LeaveParty = function() partyCalls[#partyCalls + 1] = "leave" end,
+}
+function AcceptGroup() partyCalls[#partyCalls + 1] = "accept" end
+function StaticPopup_Hide() end
 Bonfire.db.global.chatTab = true
 for _, file in ipairs({ "Money.lua", "Games/List.lua", "Quips.lua", "Roll.lua", "Ledger.lua", "Bets.lua", "Games/Embers.lua",
 	"Games/Deathroll.lua", "Games/OddManOut.lua", "History.lua", "Reputation.lua", "Table.lua" }) do
@@ -471,6 +492,89 @@ local function visits()
 	assert(ok, err)
 end
 run("Honest Broker: visits, payouts, one question", 1, visits)
+
+-- Invites: whoever sits down gets a party invite (a raid past five); the player's addon accepts
+-- the one from the host it asked; hosts invite nearby players, who get a page; the group made
+-- for the table is left with it.
+local function invites()
+	local whispers = {}
+	local realWhisper = ns.Comm.Whisper
+	function ns.Comm:Whisper(to, kind) whispers[#whispers + 1] = kind .. " " .. to end
+	local ok, err = pcall(function()
+		newTable("embers", 0, false)
+		partyCalls, group.size, group.raid, group.leader = {}, 0, false, true
+		Table:OnJoin("Pal-Realm")
+		assert(partyCalls[1] == "invite Pal-Realm", "a new player wasn't invited to the group")
+		partyCalls, group.size = {}, 5
+		Table:OnJoin("Sixth-Realm")
+		assert(partyCalls[1] == "raid" and #partyCalls == 1, "a full party wasn't made a raid first")
+		advance(1.5)
+		assert(partyCalls[2] == "invite Sixth-Realm", "the sixth wasn't invited once the raid formed")
+		partyCalls, group.raid, group.leader = {}, false, false
+		Table:OnJoin("Seventh-Realm")
+		assert(#partyCalls == 0, "invited without being the group's leader")
+		group.size, group.leader = 0, true
+		-- The host's Invite button.
+		Table:InvitePlayer("Near-Realm")
+		assert(whispers[#whispers] == "IV Near-Realm" and Table:WasInvited("Near-Realm"), "Invite didn't reach the player")
+		local t = Table.current
+		for i = #t.seats + 1, t.maxSeats do t.seats[i] = "Filler" .. i .. "-Realm" end
+		local before = #whispers
+		Table:InvitePlayer("Late-Realm")
+		assert(#whispers == before, "invited to a full table")
+		-- Player side.
+		Table.current, hostSeat = nil, "Pal-Realm"
+		Table:OnInvited({ m = 1, x = 5000, y = 5000 }, "Boss Man-Realm")
+		assert(shownInvites[#shownInvites] == "Boss Man-Realm" and ns.Beacon.fires["Boss Man-Realm"], "the invite page didn't open")
+		partyCalls = {}
+		Table:Join("Boss Man-Realm")
+		Table:OnPartyInvite("Stranger")
+		assert(#partyCalls == 0, "accepted a party invite from someone we didn't ask")
+		Table:OnPartyInvite("Boss")
+		assert(partyCalls[1] == "accept" and Table.joinedGroup == "Boss Man-Realm", "the host's party invite wasn't accepted")
+		Table.visit = { host = "Boss Man-Realm", games = 0 }
+		Table:EndVisit({ host = "Boss Man-Realm", stake = 0, balances = {} })
+		assert(partyCalls[2] == "leave" and Table.joinedGroup == nil, "the table's group wasn't left with the table")
+		Table:OnInvited({ m = 1, x = 5000, y = 5000 }, "Other-Realm")
+		Table.current = { host = "Boss Man-Realm", seats = {} }
+		local shown = #shownInvites
+		Table:OnInvited({ m = 1, x = 5000, y = 5000 }, "Third-Realm")
+		assert(#shownInvites == shown, "an invite interrupted a table we're sitting at")
+	end)
+	ns.Comm.Whisper, hostSeat, Table.current, Table.askedJoin, Table.pendingJoin = realWhisper, "Host-Realm", nil, nil, nil
+	partyCalls, group.size, group.raid, group.leader = {}, 0, false, true
+	assert(ok, err)
+end
+run("Invites: auto-invite, raid past five, host invites, auto-accept", 1, invites)
+
+-- Settings: letting players in by hand, and five-seat tables.
+local function settings()
+	local g, whispers = Bonfire.db.global, {}
+	local realWhisper = ns.Comm.Whisper
+	function ns.Comm:Whisper(to, kind) whispers[#whispers + 1] = kind .. " " .. to end
+	local ok, err = pcall(function()
+		g.autoInvite = false
+		newTable("embers", 0, false)
+		partyCalls = {}
+		Table:OnJoin("Asker-Realm")
+		assert(not tContains(Table.current.seats, "Asker-Realm") and #partyCalls == 0, "seated without being let in")
+		assert(whispers[#whispers] == "JW Asker-Realm", "the player wasn't told to wait")
+		assert(Table:Requests()[1].name == "Asker-Realm", "the request isn't listed for the host")
+		Table:LetIn("Asker-Realm")
+		assert(tContains(Table.current.seats, "Asker-Realm") and partyCalls[1] == "invite Asker-Realm", "Let in didn't seat and invite")
+		assert(#Table:Requests() == 0, "the request stayed listed")
+		g.autoInvite, g.bigTables = true, false
+		Table.current = nil
+		newTable("embers", 0, false)
+		assert(Table.current.maxSeats == 5, "five-seat tables setting ignored")
+		g.bigTables = true
+		Table:SetSeatLimit()
+		assert(Table.current.maxSeats == 10, "turning 10 seats back on didn't reach the open table")
+	end)
+	g.autoInvite, g.bigTables, ns.Comm.Whisper = true, true, realWhisper
+	assert(ok, err)
+end
+run("Settings: let in by hand, five seats", 1, settings)
 
 print(("\n%d games, %d failed, %d Odd Man Out games with a winner"):format(games, failures, decided))
 os.exit(failures == 0 and 0 or 1)

@@ -1089,6 +1089,7 @@ if io.open("Libs/AceSerializer-3.0/AceSerializer-3.0.lua") then
 	local Comm = ns.Comm
 	Comm.id = "me"
 	function Comm:ChannelId() return 5 end
+	function Comm:Group() end  -- not in a party
 
 	test("a sealed message only opens if every piece arrived in order", function()
 		local pad = {}

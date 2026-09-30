@@ -153,7 +153,7 @@ local function Build(frame)
 		ns.UI:Refresh()
 	end)
 	w.toggle:SetHeight(20)
-	w.toggle:SetPoint("TOPRIGHT", -30, -4)
+	w.toggle:SetPoint("TOPRIGHT", -74, -4)  -- clear of the spyglass, the gear and the X
 	w.toggle:Hide()
 
 	-- Bet builder: [-] 5(coin) [+] [coin] [Add]   /   Bet: total   [Clear]

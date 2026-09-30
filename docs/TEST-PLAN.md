@@ -54,7 +54,7 @@ A: `/bf burn 90` (fire has 90 s left). Watch the countdown on both clients. Star
 ## 8. The Odd Man Out
 1. A: pick **The Odd Man Out** in the Game button before starting. B joins. (Practice players can fill more seats.)
 2. A: **Start**. Both players get a row of number buttons: pick one within 15 seconds (or a random one is picked for you).
-3. Everyone clicks **Roll** at once (it greys out at the first click and says *Rolled* once the host has read it; you get one roll per round). **Key check:** does A's window register B's roll? If B always folds after 8 seconds, A can't see B's `/roll` lines, and this game (and Deathroll) can't work between players yet.
+3. **Roll** shows greyed out while anyone is still picking (it says *Others picking...* once you've picked) and lights up with the last pick. Everyone clicks **Roll** at once (it greys out at the first click and says *Rolled* once the host has read it; you get one roll per round). **Key check:** does A's window register B's roll? If B always folds after 8 seconds, A can't see B's `/roll` lines, and this game (and Deathroll) can't work between players yet.
 4. Play to a winner. Watch for the die shrinking when six players drop to five (everyone picks again), near misses after a quiet round, and stakes going to the winner.
 
 ## 9. Tidy up

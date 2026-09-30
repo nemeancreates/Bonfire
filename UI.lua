@@ -228,7 +228,7 @@ local function Build()
 		stoke = Button(frame, "Stoke", 70, function() Table:Start() end),
 		roll = Button(frame, "Roll", 60, function() Table:Roll() end),
 		bank = Button(frame, "Bank", 60, function() Table:Bank() end),
-		oddroll = Button(frame, "Roll", 100, function() Table:OmoRoll() end),
+		oddroll = Button(frame, "Roll", 120, function() Table:OmoRoll() end),
 		next = Button(frame, "Trade next", 150, function(self) ns.Trade:Open(self.name) end),
 		pay = Button(frame, "Pay host", 130, function() Table:PayHost() end),
 		cashout = Button(frame, "Cash out", 80, function() Table:CashOut() end),
@@ -254,7 +254,7 @@ local function Build()
 		end
 		return text
 	end)
-	Tooltip(buttons.oddroll, "Rolls your die once this round. Everyone rolls at once, and the host reads the rolls from chat.")
+	Tooltip(buttons.oddroll, "Rolls your die once a round. It lights up once everyone has picked a number; then everyone rolls at once and the host reads the rolls from chat.")
 	Tooltip(buttons.leave, function()
 		local t = Table.current
 		if t and Table:IsHosting() then
@@ -605,6 +605,10 @@ local function ShowOddControls(t, left)
 				Use(b)
 			end
 		end
+		-- Roll stays in view but greyed until the last pick is in, so it's clear what comes next.
+		buttons.oddroll:SetText(picked and "Others picking..." or ("Roll d%d"):format(gs.R))
+		buttons.oddroll:SetEnabled(false)
+		left[#left + 1] = buttons.oddroll
 	elseif gs.ph == "roll" then
 		-- Spent the moment it's clicked, so a second click can't send a second /roll.
 		local _, canRoll = ns.Table:OmoRollInfo()

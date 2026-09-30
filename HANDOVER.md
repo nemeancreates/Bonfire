@@ -54,7 +54,7 @@ Bonfire chat tab, range bar (drag, disappears when away), fire countdown, `/bf h
 6. ~~Side-bet results in `/bf history`~~ done in 0.6.1 (`Table:CountBets`, `History.AddBet`; every player works out their own result from the market the host sends, host's free bets and refunded rounds don't count). Untested with a real second player: needs a spectator to bet, the host to press Winner, then `/bf history` on the spectator.
 7. Duels (design in `docs/CONCEPT.md`) need the native duel API confirmed.
 8. The user may want an explicit "Play again" button instead of the default-continue rematch.
-9. Not on GitHub: everything since the last push (commit `6c4aaf3`, version 0.3.5) is uncommitted in the working tree. Ask before committing and pushing.
+9. Everything through 0.6.1 is on GitHub (commit `97ff09e`). Later work stays local until the user asks to push.
 
 ## Working here
 

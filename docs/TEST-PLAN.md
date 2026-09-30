@@ -43,7 +43,7 @@ A: `/bf burn 90` (fire has 90 s left). Watch the countdown on both clients. Star
 4. If a trade isn't picked up: A can fix it with `/bf adjust <name> 5c`.
 
 ## 7. Side bets (needs a gold table, 5 copper bets are fine)
-1. Both: the **Table** and **Bets** tabs sit in the title bar at any table (Bets is greyed on a For fun table). B clicks **Bets** first: it should say the host hasn't opened any rounds. A: **Bets**, then **New round**, pick a game, type `Oppa vs Gopher`, Enter (2 minutes to bet). B's Bets page should show the round.
+1. Both: the **Table** and **Bets** tabs sit in the title bar at any table (Bets is greyed on a For fun table). B clicks **Bets** first: it should say the host hasn't opened any rounds. A: **Bets**, then **New round**, pick a game, type `Oppa` in the first box, Tab, `Gopher` in the second (the *vs* is already between them), Enter (2 minutes to bet). The box you're typing in stays lit the whole time, even while the page updates. B's Bets page should show the round.
 2. B: pick an amount, click **Bet** on a side. B's row should say *owes*; A's list shows B under "owes" with **Collect**.
 3. B: **Pay host** (trade, both click Trade). B's bet should flip to *paid* and the pool should grow on both screens.
 4. A: **Lock bets** on every round (Shift-click locks them all). B's window should switch to a **Payments** list showing what B owes across all rounds; B pays once, A sees B flip to paid. A presses **Start games** (unpaid bets are dropped), then **Winner** on a side. Winners' credit shows as *held*; the other side shows *lost*. A bet on a round nobody bet against should be refunded.

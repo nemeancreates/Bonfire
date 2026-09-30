@@ -28,25 +28,38 @@ local function Pending()
 	return db.total > 0 and db.total or db.amount * ns.COIN_UNITS[db.unit].copper
 end
 
--- "Oppa vs Gopher" -> { "Oppa", "Gopher" } (two to six sides)
+-- "Oppa vs Gopher" (or "vs.") -> { "Oppa", "Gopher" } (two to six sides)
 local function ParseSides(text)
 	local sides = {}
-	for part in (text:gsub("%s+[vV][sS]%s+", "|")):gmatch("[^|]+") do
+	for part in (text:gsub("%s+[vV][sS]%.?%s+", "|")):gmatch("[^|]+") do
 		part = strtrim(part)
 		if part ~= "" then sides[#sides + 1] = part end
 	end
 	if #sides >= 2 and #sides <= MAX_SIDES then return sides end
 end
 
+-- The round's sides come from two boxes with "vs" fixed between them, so nobody has to type it
+-- and the addon always knows who's against whom. More than two sides: keep going in the second
+-- box ("Gopher vs Toad").
 local function SubmitRound()
-	local sides = ParseSides(w.edit:GetText() or "")
+	local a, b = strtrim(w.sideA:GetText() or ""), strtrim(w.sideB:GetText() or "")
+	if a == "" or b == "" then return ns.Table:Refuse("Name both sides, one in each box: Oppa vs Gopher.") end
+	local sides = ParseSides(a .. " vs " .. b)
 	if not sides then
-		return Bonfire:Print("Name two to six sides separated by vs, like: Oppa vs Gopher")
+		return ns.Table:Refuse(("Two to %d sides: one in the first box, the rest in the second (Gopher vs Toad)."):format(MAX_SIDES))
 	end
 	local ri = ns.Table:AddRound(sides, 120, Bets.MODES[mode])
 	if ri then viewRound = ri end
 	adding = false
-	w.edit:ClearFocus()
+	w.sideA:ClearFocus()
+	w.sideB:ClearFocus()
+	ns.UI:Refresh()
+end
+
+local function CancelRound()
+	w.sideA:ClearFocus()
+	w.sideB:ClearFocus()
+	adding = false
 	ns.UI:Refresh()
 end
 
@@ -214,11 +227,11 @@ local function Build(frame)
 	end)
 	UI.Tooltip(w.cutRow, "The share of every pot the host keeps. Locked once bets are in, so the odds can't change under anyone.")
 
-	-- Host: naming a new round. [mode] [Oppa vs Gopher________] [Open] [X]
+	-- Host: naming a new round. [mode] [Oppa___] vs [Gopher___] [Open] [X]
 	w.newRow = CreateFrame("Frame", nil, root)
 	w.newRow:SetSize(356, 24)
 	w.newRow:SetPoint("BOTTOMLEFT", 12, 94)
-	w.mode = UI.Button(w.newRow, "", 108, function() w.menu:SetShown(not w.menu:IsShown()) end)
+	w.mode = UI.Button(w.newRow, "", 96, function() w.menu:SetShown(not w.menu:IsShown()) end)
 	w.mode:SetPoint("LEFT")
 	UI.Tooltip(w.mode, "What kind of round this is. Everyone sees it in the betting window.")
 
@@ -240,34 +253,43 @@ local function Build(frame)
 	end
 	w.menu:Hide()
 
-	w.edit = CreateFrame("EditBox", nil, w.newRow)
-	w.edit:SetSize(152, 20)
-	w.edit:SetPoint("LEFT", w.mode, "RIGHT", 6, 0)
-	w.edit:SetAutoFocus(false)
-	w.edit:SetFontObject("GameFontHighlight")
-	w.edit:SetTextInsets(6, 6, 0, 0)
-	w.edit:SetMaxLetters(80)
-	local bg = w.edit:CreateTexture(nil, "BACKGROUND")
-	bg:SetAllPoints()
-	bg:SetColorTexture(0, 0, 0, 0.55)
-	-- Lit up while it has your keyboard: if it isn't, typing goes to your keybinds.
-	w.edit:SetScript("OnEditFocusGained", function() bg:SetColorTexture(0.32, 0.25, 0.06, 0.95) end)
-	w.edit:SetScript("OnEditFocusLost", function() bg:SetColorTexture(0, 0, 0, 0.55) end)
-	UI.Tooltip(w.edit, "Click to type. The box lights up while it has your keyboard. Enter opens the round.")
-	w.edit:SetScript("OnEnterPressed", SubmitRound)
-	w.edit:SetScript("OnEscapePressed", function(self)
-		self:ClearFocus()
-		adding = false
-		ns.UI:Refresh()
-	end)
-	w.start = UI.Button(w.newRow, "Open", 50, SubmitRound)
-	w.start:SetPoint("LEFT", w.edit, "RIGHT", 4, 0)
-	w.dismiss = UI.Button(w.newRow, "X", 24, function()
-		w.edit:ClearFocus()
-		adding = false
-		ns.UI:Refresh()
-	end)
-	w.dismiss:SetPoint("LEFT", w.start, "RIGHT", 4, 0)
+	local function SideBox(tip)
+		local box = CreateFrame("EditBox", nil, w.newRow)
+		box:SetSize(70, 20)
+		box:SetAutoFocus(false)
+		box:SetFontObject("GameFontHighlight")
+		box:SetTextInsets(5, 5, 0, 0)
+		box:SetMaxLetters(40)
+		local bg = box:CreateTexture(nil, "BACKGROUND")
+		bg:SetAllPoints()
+		bg:SetColorTexture(0, 0, 0, 0.55)
+		-- Lit up while it has your keyboard: if it isn't, typing goes to your keybinds.
+		box:SetScript("OnEditFocusGained", function(self)
+			bg:SetColorTexture(0.32, 0.25, 0.06, 0.95)
+			self:HighlightText()
+		end)
+		box:SetScript("OnEditFocusLost", function(self)
+			bg:SetColorTexture(0, 0, 0, 0.55)
+			self:HighlightText(0, 0)
+		end)
+		box:SetScript("OnEnterPressed", SubmitRound)
+		box:SetScript("OnEscapePressed", CancelRound)
+		UI.Tooltip(box, tip)
+		return box
+	end
+	w.sideA = SideBox("The first side. Click to type: the box lights up while it has your keyboard. Tab goes to the other side, Enter opens the round.")
+	w.sideA:SetPoint("LEFT", w.mode, "RIGHT", 6, 0)
+	w.vs = w.newRow:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+	w.vs:SetPoint("LEFT", w.sideA, "RIGHT", 4, 0)
+	w.vs:SetText("vs")
+	w.sideB = SideBox("The other side. More than two? Keep going here: Gopher vs Toad.")
+	w.sideB:SetPoint("LEFT", w.vs, "RIGHT", 4, 0)
+	w.sideA:SetScript("OnTabPressed", function() w.sideB:SetFocus() end)
+	w.sideB:SetScript("OnTabPressed", function() w.sideA:SetFocus() end)
+	w.open = UI.Button(w.newRow, "Open", 46, SubmitRound)
+	w.open:SetPoint("LEFT", w.sideB, "RIGHT", 4, 0)
+	w.dismiss = UI.Button(w.newRow, "X", 24, CancelRound)
+	w.dismiss:SetPoint("LEFT", w.open, "RIGHT", 4, 0)
 
 	-- Bottom-left actions.
 	w.lock = UI.Button(root, "Lock bets", 78, function()
@@ -285,18 +307,17 @@ local function Build(frame)
 		local last = ns.Table.current and ns.Table.current.market and ns.Table.current.market.rounds
 		last = last and last[#last]
 		adding = true
+		-- Start from the last round's sides (a rematch is one Enter away), or empty boxes.
+		w.sideA:SetText(last and last.sides[1] or "")
+		w.sideB:SetText(last and table.concat(last.sides, " vs ", 2) or "")
 		if last then
-			w.edit:SetText(table.concat(last.sides, " vs "))
 			for i, m in ipairs(Bets.MODES) do
 				if m == last.game then mode = i end
 			end
 		end
 		ns.UI:Refresh()
 		-- Give the click a moment to finish, or it takes the keyboard back.
-		C_Timer.After(0.05, function()
-			w.edit:SetFocus()
-			w.edit:HighlightText()
-		end)
+		C_Timer.After(0.05, function() w.sideA:SetFocus() end)
 	end)
 	w.pay = UI.Button(root, "Pay host", 150, function() ns.Table:PayHost() end)
 	w.start = UI.Button(root, "Start games", 140, function() ns.Table:BeginGames() end)
@@ -353,7 +374,8 @@ local function HideRoundView()
 	w.mine:SetText("")
 	for _, widget in ipairs(w.builder) do widget:Hide() end
 	w.cutRow:Hide()
-	w.newRow:Hide()
+	-- Not the round-naming row: every view sets it itself, and hiding it even for a moment
+	-- takes the keyboard off its boxes (the page redraws every few seconds).
 end
 
 local function HidePayments()
@@ -436,7 +458,7 @@ local function ShowEmpty(frame, t, hosting)
 	w.clock:SetText("")
 	w.pool:SetText("")
 	w.mine:SetText(hosting
-		and "Open a round with New round: pick what it is, then name two to six sides, like Oppa vs Gopher."
+		and "Open a round with New round: pick what it is, then name one side in each box."
 		or "The host hasn't opened any side bets yet. Rounds show up here as soon as they do.")
 	w.newRow:SetShown(hosting and adding)
 	if hosting then w.mode:SetText(("|cffffd100%s|r |cffaaaaaav|r"):format(Bets.MODES[mode])) end

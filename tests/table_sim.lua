@@ -84,7 +84,14 @@ ns.BetReady = function() return true end
 ns.ChosenGame = function() return chosen end
 ns.AtCampfire = function() return true end
 ns.CampfireBuff = function() return true end
-ns.UI = { Refresh = function() end, Notice = function() end, Show = function() end }
+local asked, owed, received = {}, {}, {}
+ns.UI = { Refresh = function() end, Notice = function() end, Show = function() end,
+	AskRating = function(_, host, seated) asked[#asked + 1] = { host, seated } end }
+ns.Broker = {
+	Met = function() end, Rate = function() end,
+	Owed = function(_, host, copper) owed[#owed + 1] = { host, copper } end,
+	Received = function(_, partner, copper) received[#received + 1] = { partner, copper } end,
+}
 ns.Beacon = { Announce = function() end, Remove = function() end, fires = {}, Distance = function() return 5 end }
 ns.Comm = {
 	selfSender = hostSeat, On = function() end, ChannelId = function() return 1 end,
@@ -101,7 +108,7 @@ function SendChatMessage() end
 function DoEmote() end
 Bonfire.db.global.chatTab = true
 for _, file in ipairs({ "Money.lua", "Games/List.lua", "Quips.lua", "Roll.lua", "Ledger.lua", "Bets.lua", "Games/Embers.lua",
-	"Games/Deathroll.lua", "Games/OddManOut.lua", "History.lua", "Table.lua" }) do
+	"Games/Deathroll.lua", "Games/OddManOut.lua", "History.lua", "Reputation.lua", "Table.lua" }) do
 	assert(loadfile(file))("Bonfire", ns)
 end
 local Table, Odd, Ledger = ns.Table, ns.Games.oddmanout, ns.Ledger
@@ -420,6 +427,50 @@ local function stateTraffic()
 	assert(ok, err)
 end
 run("Table state: sent only when needed", 1, stateTraffic)
+
+-- Honest Broker, player side: a visit to someone's table. Played a game, cashed out: the payout
+-- clock starts and you're asked once; leaving later doesn't ask again. A visit with no game
+-- played doesn't ask at all. A host closing up starts the clock too.
+local function visits()
+	local me, host = "Pal-Realm", "Boss Man-Realm"
+	local function state(extra)
+		local d = { h = host, g = "embers", a = 500, n = 10, st = "open", s = { host, me }, b = { 0, 700 }, tl = {},
+			f = { 1, 5000, 5000 } }
+		for k, v in pairs(extra or {}) do d[k] = v end
+		return d
+	end
+	local ok, err = pcall(function()
+		hostSeat = me
+		Table.current, Table.visit, Table.pendingJoin = nil, nil, host
+		asked, owed, received = {}, {}, {}
+		Table:OnState(state(), host)
+		assert(Table.visit and Table.visit.host == host, "joining didn't start a visit")
+		Table:OnState(state({ id = "g1", w = { me }, sh = 1000, gs = { r = 5, R = 5, p = { { me, 9, 0, 0 }, { host, 3, 0, 0 } } } }), host)
+		assert(Table.visit.games == 1, "the game played wasn't counted")
+		Table:CashOut()
+		assert(#owed == 1 and owed[1][2] == 700, "cashing out didn't start the payout clock")
+		assert(#asked == 1 and asked[1][1] == host and asked[1][2] == true, "cashing out didn't ask how the table was")
+		Table:OnTradeComplete("Boss", 700)
+		assert(#received == 1 and received[1][2] == 700, "the payout wasn't noted")
+		Table:Leave()
+		assert(#asked == 1, "asked twice in one visit")
+		assert(Table.visit == nil and Table.current == nil, "the visit didn't end")
+		-- In and out without playing: nothing to rate.
+		Table.pendingJoin = host
+		Table:OnState(state({ b = { 0, 0 } }), host)
+		Table:Leave()
+		assert(#asked == 1, "asked about a table where nothing was played")
+		-- The host closes up while holding your winnings: the clock starts when it says so.
+		Table.pendingJoin = host
+		Table:OnState(state(), host)
+		local before = #owed
+		Table:OnState(state({ st = "settling" }), host)
+		assert(#owed == before + 1 and owed[#owed][2] == 700, "a closing table's payout wasn't watched")
+	end)
+	hostSeat, Table.current, Table.visit, Table.pendingJoin = "Host-Realm", nil, nil, nil
+	assert(ok, err)
+end
+run("Honest Broker: visits, payouts, one question", 1, visits)
 
 print(("\n%d games, %d failed, %d Odd Man Out games with a winner"):format(games, failures, decided))
 os.exit(failures == 0 and 0 or 1)

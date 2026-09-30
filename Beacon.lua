@@ -26,6 +26,7 @@ local function PinTooltip(pin)
 	local game = ns.Games[fire.game]
 	GameTooltip:AddLine(("%s  %d/%d seats %s"):format(game and game.name or "?", fire.seats or 0, fire.maxSeats or 0, ns.StakeBadge(fire.stake)), 1, 1, 1)
 	GameTooltip:AddLine((fire.stake or 0) > 0 and ("Stake " .. ns.Coins(fire.stake)) or "For fun, no gold involved", 1, 1, 1)
+	GameTooltip:AddLine("Host: " .. ns.Broker:Describe(fire.host), 1, 1, 1)
 	GameTooltip:AddLine(fire.state == "playing" and "Game in progress" or fire.state == "settling" and "Closing up" or "Open, /bf to join", 0.6, 0.8, 1)
 	GameTooltip:Show()
 end
@@ -54,6 +55,23 @@ function Beacon:Enable()
 	Bonfire:ScheduleRepeatingTimer(function() self:Tick() end, 5)
 	-- Ask who's already out there once the channel is up.
 	C_Timer.After(15, function() ns.Comm:Broadcast("Q", {}, "BULK") end)
+end
+
+-- Whether other players can see our fire, in words, for /bf status.
+function Beacon:Visibility()
+	local t, placed = ns.Table.current, ns.Table.placed
+	local channel = ns.Comm:ChannelId() and "" or " Not on the Bonfire channel yet, so only players within /say range hear it."
+	if t and t.host == ns.Me() then
+		if t.stake > 0 and ns.Table:HasBots() then
+			return "hidden: practice players at a gold table keep it off other players' maps (/bf dummy clear)."
+		end
+		return ("announced every %d s, last %d s ago.%s"):format(ANNOUNCE_EVERY, GetTime() - (self.lastAnnounce or 0), channel)
+	elseif t then
+		return "you're at someone else's table."
+	elseif placed and GetServerTime() < placed.at + ns.Table.FIRE_LIFETIME then
+		return "your campfire (no table yet) is announced every " .. ANNOUNCE_EVERY .. " s." .. channel
+	end
+	return "you aren't hosting a fire."
 end
 
 function Beacon:Announce()

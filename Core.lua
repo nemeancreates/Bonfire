@@ -213,6 +213,7 @@ function Bonfire:OnEnable()
 	ns.Range:Enable()
 	ns.Chat:Enable()
 	ns.Quips:Enable()
+	ns.Broker:Enable()
 	local _, build, _, interface = GetBuildInfo()
 	self:Printf("v%s loaded (client %s, interface %d). /bf to open.",
 		C_AddOns.GetAddOnMetadata(ADDON, "Version"), build, interface)

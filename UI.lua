@@ -7,7 +7,7 @@ local UI = {}
 ns.UI = UI
 
 local ROWS = 10
-local frame, rows, buttons, stake, pickButtons
+local frame, rows, buttons, stake, pickButtons, park
 
 local function Button(parent, label, width, onClick)
 	local b = CreateFrame("Button", nil, parent, "UIPanelButtonTemplate")
@@ -165,7 +165,24 @@ local function Build()
 	end)
 	frame:SetClampedToScreen(true)
 	frame:Hide()
-	tinsert(UISpecialFrames, "BonfireFrame")
+	tinsert(UISpecialFrames, "BonfireFrame")  -- Esc closes it
+	-- The X closes it too, wired straight to Hide rather than through Blizzard's panel manager.
+	local close = frame.CloseButton or _G.BonfireFrameCloseButton
+	if close then close:SetScript("OnClick", function() frame:Hide() end) end
+
+	-- Where the secure Light a fire button waits while the window doesn't show it. A secure
+	-- button inside the window (or anchored to it) makes the whole window protected, and the game
+	-- then won't let the X or Esc hide it in combat. Parked here, the window is an ordinary frame.
+	park = CreateFrame("Frame")
+	park:Hide()
+	frame:SetScript("OnHide", function()
+		local light = buttons and buttons.light
+		if light and not InCombatLockdown() and light:GetParent() ~= park then
+			light:Hide()
+			light:ClearAllPoints()
+			light:SetParent(park)
+		end
+	end)
 
 	local title = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
 	title:SetPoint("TOP", 0, -5)
@@ -178,6 +195,7 @@ local function Build()
 	frame.header:SetPoint("TOPLEFT", 14, -32)
 	frame.header:SetPoint("RIGHT", frame.burn, "LEFT", -8, 0)
 	frame.header:SetJustifyH("LEFT")
+	frame.header:SetWordWrap(false)
 
 	-- Two short lines under the header: what's happening (it may run to a second line), and the
 	-- money, one line, stacked below it so the two can never print over each other.
@@ -206,6 +224,7 @@ local function Build()
 		row:SetPoint("TOPLEFT", 16, -68 - i * 22)
 		row:SetPoint("RIGHT", -86, 0)
 		row:SetJustifyH("LEFT")
+		row:SetWordWrap(false)
 		row.button = Button(frame, "", 64, function(self) self.action() end)
 		row.button:SetPoint("RIGHT", frame, "RIGHT", -14, 0)
 		row.button:SetPoint("TOP", row, "TOP", 0, 5)
@@ -215,7 +234,7 @@ local function Build()
 	local Table = ns.Table
 	buttons = {
 		here = Button(frame, "Host at this fire", 130, function() Table:Host() end),
-		light = SecureButton(frame, "Light a fire", 110, function(self)
+		light = SecureButton(park, "Light a fire", 110, function(self)
 			if not InCombatLockdown() then self:SetAttribute("type", "item") end
 			if ns.BetReady() then Table:Armed() end
 		end, function(self)
@@ -238,6 +257,23 @@ local function Build()
 			UI:Refresh()
 		end),
 	}
+	-- The Honest Broker's question after a table: two rows of one-click answers, on rows 2 and 4.
+	local function Answer(label, field, value, x, row)
+		local b = Button(frame, label, 60, function() UI:Answer(field, value) end)
+		b.field, b.value, b.label = field, value, label
+		b:SetPoint("TOPLEFT", frame, "TOPLEFT", x, -68 - row * 22 + 5)
+		return b
+	end
+	buttons.fairYes = Answer("Yes", "t", 1, 130, 2)
+	buttons.fairNo = Answer("No", "t", -1, 194, 2)
+	buttons.paceQuick = Answer("Quick", "p", 1, 130, 4)
+	buttons.paceOk = Answer("OK", "p", 2, 194, 4)
+	buttons.paceSlow = Answer("Slow", "p", 3, 258, 4)
+	buttons.rateDone = Button(frame, "Skip", 110, function() UI:EndRating() end)
+	buttons.rateDone:SetPoint("BOTTOMRIGHT", -12, 10)
+	Tooltip(buttons.fairYes, "They paid out what they held and ran the table straight.")
+	Tooltip(buttons.fairNo, "Something was off: money not paid out, or a table that didn't feel honest.")
+	Tooltip(buttons.paceSlow, "Games dragged: long waits between rolls or starts.")
 	buttons.leave:SetPoint("BOTTOMRIGHT", -12, 10)
 	buttons.history:SetPoint("BOTTOMRIGHT", -12, 10)
 	Tooltip(buttons.history, "Your games, side bets and gold at Bonfire tables. Kept per character.")
@@ -339,7 +375,12 @@ local function HideUnused()
 	local marks = used
 	used = nil
 	local function check(w)
-		if not marks[w] and not Locked(w) then w:Hide() end
+		if marks[w] or Locked(w) then return end
+		w:Hide()
+		if w.secure and w:GetParent() ~= park then
+			w:ClearAllPoints()
+			w:SetParent(park)
+		end
 	end
 	for _, row in ipairs(rows) do check(row.button) end
 	for _, b in pairs(buttons) do check(b) end
@@ -403,6 +444,21 @@ local function ShowHistory()
 	Use(buttons.history)
 end
 
+-- How was the host's table? Asked once per visit when you leave or cash out; skippable.
+local function ShowRating()
+	local r = UI.rating
+	frame.header:SetText(("How was %s's table?"):format(ns.Short(r.host)))
+	frame.sub:SetText("One click each, both optional. Your word travels to players you pass, so good hosts get known.")
+	SetRow(2, "Paid out fair?")
+	SetRow(4, "Pace")
+	for _, b in ipairs({ buttons.fairYes, buttons.fairNo, buttons.paceQuick, buttons.paceOk, buttons.paceSlow }) do
+		b:SetText(r.answers[b.field] == b.value and ("|cffffd100" .. b.label .. "|r") or b.label)
+		Use(b)
+	end
+	buttons.rateDone:SetText(r.seated and "Back to table" or ((r.answers.t or r.answers.p) and "Done" or "Skip"))
+	Use(buttons.rateDone)
+end
+
 local function ShowFires()
 	frame.header:SetText("Nearby fires")
 	local list = ns.Beacon:List()
@@ -425,8 +481,8 @@ local function ShowFires()
 			SetRow(i, ("%s's campfire  |cff999999no table yet  %s|r"):format(ns.Short(fire.host),
 				fire.distance and ("%d yd"):format(fire.distance) or "far"))
 		else
-			SetRow(i, ("%s  %s  %d/%d %s  %s  |cff999999%s|r"):format(
-					ns.Short(fire.host), game and game.name or "?", fire.seats or 0, fire.maxSeats or 0,
+			SetRow(i, ("%s %s  %s  %d/%d %s  %s  |cff999999%s|r"):format(
+					ns.Short(fire.host), ns.Broker:Badge(fire.host), game and game.name or "?", fire.seats or 0, fire.maxSeats or 0,
 					ns.StakeBadge(fire.stake), ns.Coins(fire.stake), fire.distance and ("%d yd"):format(fire.distance) or "far"),
 				"Join", function() ns.Table:Join(fire.host) end,
 				near and fire.state ~= "settling" and (fire.seats or 0) < (fire.maxSeats or 0))
@@ -440,6 +496,7 @@ local function ShowFires()
 	-- At a campfire: host there. Otherwise light one with the kit, or explain what's missing.
 	local atFire, kit = ns.AtCampfire(), ns.FindCampfireKit()
 	if not atFire and kit and not InCombatLockdown() then
+		buttons.light:SetParent(frame)  -- out of combat here; parked again when it's not shown
 		buttons.light:SetAttribute("item", kit)
 		LayoutLeft({ buttons.light })
 	else
@@ -626,7 +683,8 @@ local function ShowTable(t)
 	local owed = {}
 	for _, p in ipairs(payouts) do owed[p[1]] = p[2] end
 
-	frame.header:SetText(("%s's fire  |cffffffff%s|r %s"):format(ns.Short(t.host), game and game.name or "?", ns.StakeBadge(t.stake)))
+	local badge = hosting and "" or (" " .. ns.Broker:Badge(t.host))
+	frame.header:SetText(("%s's fire%s  |cffffffff%s|r %s"):format(ns.Short(t.host), badge, game and game.name or "?", ns.StakeBadge(t.stake)))
 	frame.sub:SetText(Subtitle(t))
 	frame.money:SetText(MoneyLine(t))
 	frame.burn:SetText(BurnText(t))
@@ -768,12 +826,15 @@ local function Draw()
 	UI.betsButton:SetEnabled(t ~= nil and t.stake > 0)
 	if UI.view == "bets" and (not t or t.stake == 0) then UI.view = nil end
 	if UI.view == "history" and t then UI.view = nil end  -- sitting down takes you to the table
+	local r = UI.rating
+	if r and (GetTime() - r.at > 900 or (t and t.host ~= r.host)) then UI.rating, r = nil, nil end
+	if UI.view == "rate" and not r then UI.view = nil end
 	local inBets = UI.view == "bets"
 	-- The tab you're on shows in gold.
 	UI.tableButton:SetText(inBets and "Table" or "|cffffd100Table|r")
 	UI.betsButton:SetText(inBets and "|cffffd100Bets|r" or "Bets")
 	-- The game picker: on the main menu, and at your own table between games.
-	local pickable = not inBets and UI.view ~= "history" and (not t or (ns.Table:IsHosting() and t.state == "open"))
+	local pickable = not inBets and UI.view ~= "history" and UI.view ~= "rate" and (not t or (ns.Table:IsHosting() and t.state == "open"))
 	UI.gameButton:SetShown(pickable)
 	if pickable then
 		UI.gameButton:SetText(("Game: |cffffd100%s|r  v"):format(ns.GameName(t and t.game or ns.ChosenGame())))
@@ -788,6 +849,7 @@ local function Draw()
 		return
 	end
 	ns.BetsUI:Hide()
+	if UI.view == "rate" then return ShowRating() end
 	if UI.view == "history" then return ShowHistory() end
 	if t then ShowTable(t) else ShowFires() end
 end
@@ -799,6 +861,36 @@ function UI:Refresh()
 	local ok, err = pcall(Draw)
 	HideUnused()  -- also clears `used`, so an error can't leave the window stuck
 	if not ok then geterrorhandler()(err) end
+end
+
+-- The Honest Broker asks how a host's table was. If the window is closed it waits there (for a
+-- quarter of an hour) and chat says so, rather than popping up on someone walking away.
+-- seated: asked at Cash out, so the page offers a way back to the table.
+function UI:AskRating(host, seated)
+	UI.rating = { host = host, seated = seated, at = GetTime(), answers = {} }
+	UI.view = "rate"
+	if frame and frame:IsShown() then return self:Refresh() end
+	Bonfire:Printf("How was %s's table? Open /bf to rate it: one click, and you can skip it.", ns.Short(host))
+end
+
+function UI:Answer(field, value)
+	local r = UI.rating
+	if not r then return end
+	r.answers[field] = value
+	ns.Broker:Rate(r.host, { [field] = value })
+	-- Both answered: done, back to where you were.
+	if r.answers.t and r.answers.p then
+		C_Timer.After(0.8, function()
+			if UI.rating == r then UI:EndRating() end
+		end)
+	end
+	self:Refresh()
+end
+
+function UI:EndRating()
+	UI.rating = nil
+	if UI.view == "rate" then UI.view = nil end
+	self:Refresh()
 end
 
 -- A red line near the bottom of the window for a few seconds, for when a click is refused.

@@ -7,6 +7,7 @@ load("Money.lua")
 load("Ledger.lua")
 load("History.lua")
 load("Bets.lua")
+load("Reputation.lua")
 load("Games/List.lua")
 load("Quips.lua")
 load("Games/Embers.lua")
@@ -966,6 +967,105 @@ test("a fold in the pick phase can shrink the die and restart the picks", functi
 	picked(s, { { "P1", 15 }, { "P2", 12 } })
 	Odd.Fold(s, "P3")
 	eq(s.range, 10); eq(next(s.picks), nil); eq(#Odd.Waiting(s), 5)
+end)
+
+-- Honest Broker ----------------------------------------------------------------
+local Rep = ns.Rep
+
+-- A store where each listed rater says something about host H: { rater, trust, pace, unpaid }.
+local function Rated(list, now)
+	local store = Rep.New()
+	for _, e in ipairs(list) do
+		Rep.Merge(store, { h = "H-R", r = e[1], t = e[2], p = e[3], up = e[4], at = now or 100 }, e[1], "Me-R", now or 100)
+	end
+	return store
+end
+
+test("a host is New until three different players have rated them", function()
+	local store = Rated({ { "A-R", 1, 1 }, { "B-R", 1, 1 } })
+	eq(Rep.Badge(Rep.Summary(store, "H-R")), "new")
+	eq(Rep.Label(Rep.Summary(store, "H-R")), "New")
+	Rep.Merge(store, { h = "H-R", r = "C-R", t = 1, p = 1, at = 100 }, "C-R", "Me-R", 100)
+	local s = Rep.Summary(store, "H-R")
+	eq(Rep.Badge(s), "trusted"); eq(Rep.Pace(s), "quick"); eq(Rep.Label(s), "Trusted, quick")
+end)
+
+test("unpaid and unfair reports make a host Mixed, then Avoid", function()
+	local store = Rated({ { "A-R", 1, 2 }, { "B-R", 1, 2 }, { "C-R", 1, 3 }, { "D-R", nil, nil, 500 } })
+	eq(Rep.Badge(Rep.Summary(store, "H-R")), "trusted")  -- one bad in four isn't enough
+	Rep.Merge(store, { h = "H-R", r = "E-R", t = -1, at = 100 }, "E-R", "Me-R", 100)
+	eq(Rep.Badge(Rep.Summary(store, "H-R")), "mixed")
+	for _, r in ipairs({ "F-R", "G-R" }) do Rep.Merge(store, { h = "H-R", r = r, up = 900, at = 100 }, r, "Me-R", 100) end
+	local s = Rep.Summary(store, "H-R")
+	eq(Rep.Badge(s), "avoid"); eq(s.unpaid, 3); eq(Rep.Label(s), "Avoid: 3 unpaid")
+	local few = Rated({ { "A-R", nil, nil, 100 } })
+	eq(Rep.Label(Rep.Summary(few, "H-R")), "New, 1 unpaid")
+end)
+
+test("one player's word counts once, their own beats hearsay, and nobody speaks for us", function()
+	local store = Rep.New()
+	eq(Rep.Merge(store, { h = "H-R", r = "A-R", t = -1, at = 100 }, "X-R", "Me-R", 200), true)  -- passed along
+	eq(Rep.Merge(store, { h = "H-R", r = "A-R", t = -1, at = 90 }, "Y-R", "Me-R", 200), false)  -- older hearsay
+	eq(Rep.Merge(store, { h = "H-R", r = "A-R", t = 1, at = 50 }, "A-R", "Me-R", 200), true)    -- A says it themself
+	eq(Rep.Merge(store, { h = "H-R", r = "A-R", t = -1, at = 150 }, "X-R", "Me-R", 200), false) -- hearsay can't undo it
+	eq(Rep.Summary(store, "H-R").raters, 1); eq(Rep.Summary(store, "H-R").fair, 1)
+	eq(Rep.Merge(store, { h = "H-R", r = "Me-R", t = -1, at = 150 }, "X-R", "Me-R", 200), false)
+	eq(Rep.Merge(store, { h = "H-R", r = "H-R", t = 1, at = 150 }, "H-R", "Me-R", 200), false)  -- rating yourself
+	eq(Rep.Merge(store, { h = "H-R", r = "B-R", t = 1, at = 9999 }, "B-R", "Me-R", 200), false) -- from the future
+	eq(Rep.Merge(store, { h = "H-R", r = "B-R", t = 7, at = 150 }, "B-R", "Me-R", 200), false)  -- nonsense
+	eq(Rep.Merge(store, { h = "Rat (bot)", r = "B-R", t = 1, at = 150 }, "B-R", "Me-R", 200), false)
+end)
+
+test("the payout clock: paid in time is on record, late is unpaid until it's paid", function()
+	local store = Rep.New()
+	Rep.Owe(store, "Host Name-R", 1000, 0)
+	eq(select(2, Rep.Received(store, "Me-R", "Host", 400, 10)), 400)  -- the trade window says "Host"
+	eq(store.owed["Host Name-R"].c, 600)
+	eq(Rep.CheckOwed(store, "Me-R", Rep.GRACE - 1), false)
+	eq(Rep.CheckOwed(store, "Me-R", Rep.GRACE), true)
+	local s = Rep.Summary(store, "Host Name-R")
+	eq(s.unpaid, 1); eq(s.overdue, 600); eq(s.paid, 400)
+	Rep.Received(store, "Me-R", "Host", 600, Rep.GRACE + 50)
+	s = Rep.Summary(store, "Host Name-R")
+	eq(s.unpaid, 0); eq(s.paid, 1000); eq(store.owed["Host Name-R"], nil)
+	eq(Rep.Received(store, "Me-R", "Stranger", 500, 700), nil)  -- trades with anyone else don't count
+	Rep.Owe(store, "Other-R", 300, 0)
+	Rep.CheckOwed(store, "Me-R", Rep.GRACE)
+	Rep.Clear(store, "Me-R", "Other-R", Rep.GRACE + 1)  -- /bf rep paid Other
+	eq(Rep.Summary(store, "Other-R").unpaid, 0); eq(store.owed["Other-R"], nil)
+end)
+
+test("a digest carries our own records first, each name once, and unpacks the same", function()
+	local store = Rated({ { "A-R", 1, 1 }, { "B-R", -1, 3, 200 } }, 100)
+	Rep.Set(store, "Me-R", "H-R", { t = 1, p = 2 }, 50)
+	Rep.Set(store, "Me-R", "Rat (bot)", { t = 1 }, 60)  -- practice hosts never travel
+	local d = Rep.Digest(store, "Me-R", 200, 2)
+	eq(#d.r, 2); eq(d.n[d.r[1][2]], "Me-R")
+	eq(#d.n, 3)  -- H-R, Me-R and one other rater
+	local back = Rep.Unpack(d)
+	eq(back[1].h, "H-R"); eq(back[1].t, 1); eq(back[1].p, 2); eq(back[1].up, nil)
+	eq(Rep.Unpack({ n = "x", r = {} }), nil)
+	eq(#Rep.Unpack({ n = { "A" }, r = { { 1, 9, 1, 1, 0, 0, 5 }, "junk" } }), 0)
+	local other = Rep.New()
+	for _, rec in ipairs(Rep.Unpack(Rep.Digest(store, "Me-R", 200, 12))) do Rep.Merge(other, rec, "Me-R", "You-R", 200) end
+	eq(Rep.Summary(other, "H-R").raters, 3)
+end)
+
+test("old records are forgotten and the store stays bounded", function()
+	local store = Rep.New()
+	Rep.Merge(store, { h = "H-R", r = "A-R", t = 1, at = 0 }, "X-R", "Me-R", 0)
+	Rep.Merge(store, { h = "H-R", r = "B-R", t = 1, at = Rep.EXPIRE }, "X-R", "Me-R", Rep.EXPIRE)
+	Rep.Prune(store, Rep.EXPIRE + 10)
+	eq(store.hosts["H-R"]["A-R"], nil); eq(store.hosts["H-R"]["B-R"] ~= nil, true)
+	local keep = Rep.KEEP
+	Rep.KEEP = 3
+	for i = 1, 6 do Rep.Merge(store, { h = "H" .. i, r = "A-R", t = 1, at = Rep.EXPIRE + i }, "X-R", "Me-R", Rep.EXPIRE + 10) end
+	Rep.Prune(store, Rep.EXPIRE + 10)
+	local count = 0
+	for _, raters in pairs(store.hosts) do for _ in pairs(raters) do count = count + 1 end end
+	Rep.KEEP = keep
+	eq(count, 3); eq(store.hosts["H6"] ~= nil, true); eq(store.hosts["H1"], nil)
+	eq(Rep.Find(store, "h6"), "H6")
 end)
 
 -- Comms ------------------------------------------------------------------------

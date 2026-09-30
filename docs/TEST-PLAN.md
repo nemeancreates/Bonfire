@@ -57,7 +57,15 @@ A: `/bf burn 90` (fire has 90 s left). Watch the countdown on both clients. Star
 3. **Roll** shows greyed out while anyone is still picking (it says *Others picking...* once you've picked) and lights up with the last pick. Everyone clicks **Roll** at once (it greys out at the first click and says *Rolled* once the host has read it; you get one roll per round). **Key check:** does A's window register B's roll? If B always folds after 8 seconds, A can't see B's `/roll` lines, and this game (and Deathroll) can't work between players yet.
 4. Play to a winner. Watch for the die shrinking when six players drop to five (everyone picks again), near misses after a quiet round, and stakes going to the winner.
 
-## 9. Tidy up
+## 9. Honest Broker
+1. Standing near each other with no table: within about a minute each of you should have traded what you know. `/bf rep` on both says how many hosts you know about (it may be 0 at first; that's fine).
+2. B plays at least one game at A's table (For fun is fine), then clicks **Leave**. B's window should ask *How was A's table?*: click **Yes** and **Quick**; it closes by itself. If B's window was closed, chat says to open `/bf`, and the question is waiting there.
+3. B: `/bf rep A` should show 1 player, fair yes. A (after the next handshake, or right away if you're still next to each other): `/bf rep` shows what B said, and A's History page has an *As a host* line.
+4. Gold (tiny stakes): B wins, clicks **Cash out**: the question shows then (with **Back to table**), not again on leaving. A pays B by trade: nothing should be reported unpaid. Try once more where A doesn't pay: after 10 minutes, `/bf rep A` on B shows 1 unpaid report; once A pays, it clears.
+5. The fire list and map pin tooltip show A's badge (New until three players have rated A).
+6. Alone: `/bf rep practice` shows the question for a pretend host, so you can see how it looks.
+
+## 10. Tidy up
 A closes the table. B should see "put out their fire" and the pin should disappear within ~90 s.
 
 ## What to send back

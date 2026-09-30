@@ -177,6 +177,7 @@ function Table:CountStats(t)
 	end
 	if not played then return end
 	counted[t.id] = true
+	if self.visit and self.visit.host == t.host then self.visit.games = self.visit.games + 1 end
 	if #t.winners == 0 then return end  -- nobody won: stakes went back, so it isn't a result
 	local won = tContains(t.winners, me)
 	local net = 0
@@ -546,6 +547,7 @@ function Table:OnJoin(sender)
 	t.seats[#t.seats + 1] = sender
 	t.left[sender] = nil  -- back again: any credit is theirs to play with
 	self.sentMv = nil     -- the newcomer needs the whole side-bet card
+	ns.Broker:Met(sender) -- and you trade what you know about hosts
 	self:Push()
 	ns.Beacon:Announce()
 end
@@ -1118,7 +1120,8 @@ function Table:AddBots(count)
 		end
 	end
 	if added == 0 then return Bonfire:Print("The table is full.") end
-	Bonfire:Printf("%d practice player%s sat down. They play on pretend gold.", added, added == 1 and "" or "s")
+	Bonfire:Printf("%d practice player%s sat down. They play on pretend gold.%s", added, added == 1 and "" or "s",
+		t.stake > 0 and " While they're at this gold table, your fire is hidden from other players (/bf dummy clear to show it)." or "")
 	self:Push()
 	ns.Beacon:Announce()
 end
@@ -1318,12 +1321,13 @@ function Table:OnTakeover(d, sender)
 		nt.host, nt.state, nt.gs, nt.winners, nt.payouts, nt.heard = ns.Me(), "open", nil, nil, nil, nil
 		Ledger.Init(nt)
 		self.current, self.game, self.away, self.warned = nt, nil, 0, false
-		self.sentMv, self.lastState = nil, nil
+		self.sentMv, self.lastState, self.visit = nil, nil, nil
 		Bonfire:Print("The host left the fire, so you're hosting the table now.")
 		ns.Beacon:Announce()
 		self:Push()
 	elseif tContains(t.seats, d.to) then
 		t.host = d.to
+		if self.visit then self.visit = { host = d.to, games = 0 } end  -- the old host held nothing (hand-off needs that)
 		RemoveValue(t.seats, sender)
 		t.heard = GetTime()
 		Bonfire:Printf("%s left the fire; %s hosts now.", ns.Short(sender), ns.Short(d.to))
@@ -1359,6 +1363,8 @@ end
 
 -- copper > 0: we received it from partner.
 function Table:OnTradeComplete(partner, copper)
+	-- Paid while not hosting: if it's a host that owed us, the Honest Broker notes the payout.
+	if copper > 0 and not self:IsHosting() then ns.Broker:Received(partner, copper) end
 	local t = self.current
 	if not t then return end
 	if self:IsHosting() then
@@ -1395,6 +1401,26 @@ function Table:Adjust(who, copper)
 	self:Push()
 end
 
+-- Honest Broker -------------------------------------------------------------------
+-- A visit is your time at someone else's table. When it ends (you leave or walk off, the table
+-- closes, the host drops you or goes quiet), anything the host still holds for you starts the
+-- payout clock, and if you played a game you're asked how the table was: once per visit, and
+-- skippable. Hosts aren't asked about their own table.
+
+function Table:StartVisit(t)
+	self.visit = { host = t.host, games = 0 }
+	ns.Broker:Met(t.host)
+end
+
+function Table:EndVisit(t)
+	local v = self.visit
+	self.visit = nil
+	if not v or not t or v.host ~= t.host then return end
+	local held = t.stake > 0 and Ledger.Balance(t, ns.Me()) or 0
+	if held > 0 then ns.Broker:Owed(t.host, held) end
+	if v.games > 0 and not v.rated then ns.UI:AskRating(t.host) end
+end
+
 -- Player side ----------------------------------------------------------------
 
 function Table:Join(host)
@@ -1424,6 +1450,7 @@ function Table:Leave()
 	end
 	self:Recap(t)
 	self.current, self.away, self.warned = nil, 0, false
+	self:EndVisit(t)
 	ns.UI:Refresh()
 end
 
@@ -1440,7 +1467,17 @@ end
 function Table:CashOut()
 	ns.Quips:Click("cashout")
 	local t = self.current
-	if t and not self:IsHosting() then ns.Comm:Whisper(t.host, "C") end
+	if not t or self:IsHosting() then return end
+	ns.Comm:Whisper(t.host, "C")
+	-- Cashing out is usually wrapping up: the payout clock starts, and it's the moment to ask
+	-- how the table was (once per visit).
+	local held = Ledger.Balance(t, ns.Me())
+	if held > 0 then ns.Broker:Owed(t.host, held) end
+	local v = self.visit
+	if v and v.games > 0 and not v.rated then
+		v.rated = true
+		ns.UI:AskRating(t.host, true)
+	end
 end
 
 function Table:PayHost()
@@ -1457,12 +1494,21 @@ function Table:OnState(d, sender)
 	if not t or not tContains(t.seats, ns.Me()) then
 		-- Either our join hasn't landed yet, or the host dropped us.
 		if ours and t then
+			self:EndVisit(self.current)
 			self.current = nil
 			ns.UI:Refresh()
 		end
 		return
 	end
 	self.pendingJoin = nil
+	if not ours then self:StartVisit(t) end
+	-- The host is closing up and paying everyone back: that's a payout the clock should watch.
+	local v = self.visit
+	if t.state == "settling" and v and not v.settling then
+		v.settling = true
+		local held = Ledger.Balance(t, ns.Me())
+		if held > 0 then ns.Broker:Owed(t.host, held) end
+	end
 	t.heard = GetTime()
 	self:KeepMarket(t, d, sender)
 	self.current = t
@@ -1516,6 +1562,7 @@ function Table:OnClosed(sender)
 		self:Recap(t)
 		local balance = Ledger.Balance(t, ns.Me())
 		if balance > 0 then Bonfire:Printf("|cffff6666They still held %s for you.|r", ns.Coins(balance)) end
+		self:EndVisit(t)
 		ns.UI:Refresh()
 	end
 end
@@ -1534,6 +1581,7 @@ function Table:Watchdog()
 	if t and not self:IsHosting() and GetTime() - (t.heard or 0) > HOST_TIMEOUT then
 		self.current = nil
 		Bonfire:Printf("Lost contact with %s's fire.", ns.Short(t.host))
+		self:EndVisit(t)
 		ns.UI:Refresh()
 	end
 end
@@ -1583,6 +1631,15 @@ function Table:HistoryLines(games, bets)
 	end
 	for name, copper in pairs(Bonfire.db.char.debts or {}) do
 		add("|cffff6666You still owe %s %s from a table you left.|r", ns.Short(name), ns.Coins(copper))
+	end
+	-- What players who've sat at your tables say (it reaches you as you pass other Bonfire users).
+	local store = Bonfire.db.global.rep
+	if store and ns.Rep then
+		local s = ns.Rep.Summary(store, ns.Me())
+		if s.raters > 0 then
+			local text, color = ns.Rep.Label(s)
+			add("As a host: |cff%s%s|r (%d player%s rated your tables).", color, text, s.raters, s.raters == 1 and "" or "s")
+		end
 	end
 	return lines
 end

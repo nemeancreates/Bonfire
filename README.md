@@ -4,6 +4,10 @@ Find campfires on your minimap and play quick dice games with whoever's sitting 
 
 Until the game gets a smoke trail for campfires, Bonfire is the signal: hosts broadcast their fire, and everyone else running the addon sees it pinned on the minimap and world map.
 
+## Installing
+
+Use a packaged `Bonfire-x.y.z.zip`, not GitHub's green **Code > Download ZIP**: that one is the source, without the `Libs` folder, in a folder called `Bonfire-main` that WoW won't load. Unzip the packaged zip into `World of Warcraft\_classic_beta_\Interface\AddOns\` so you end up with `AddOns\Bonfire\Bonfire.toc`, then restart the game (a `/reload` isn't enough for a new addon). Players at the same table need the same version; the login line says which one you have.
+
 ## Playing
 
 - `/bf` opens the window: nearby fires, or your table. A gold coin next to a fire's seats means it's played for gold; no coin means **For fun**.
@@ -44,9 +48,11 @@ The table window explains the money in words: the host sees how much player cred
 
 **Rematch:** after a game the host's button becomes **Rematch**, held for 5 seconds so players can cash out first.
 
+**Honest Broker:** hosts get a reputation. When you leave or cash out after playing at someone's table, the window asks two one-click questions, both optional: *Paid out fair?* and *Pace* (quick, OK, slow). Your addon also watches for the payout: gold the host still held for you that hasn't reached you after 10 minutes goes on record as unpaid (and comes off once it's paid; `/bf rep paid <name>` if they paid you outside Bonfire). Word travels when Bonfire users pass each other or share a table, so a host's name gets known across the realm. Each fire shows a badge (New until three players have rated it, then Trusted, Mixed or Avoid, with the pace), in the list, on the map pin and in the table header. Badges are advice; Join always works. `/bf rep <name>` for details, `/bf rep` for what players say about you (also on your History page). Design: [docs/HONEST-BROKER.md](docs/HONEST-BROKER.md).
+
 **History:** the **History** button on the main page (or `/bf history`) shows your record in a few plain lines: games played, wins and losses, the gold you won and lost, your current streak and best runs, and your last five results. Side bets have their own line (settled, won, lost, gold) and your last three, so a night spent only betting shows up too, plus anything you still owe from a table you left. The main menu shows a one-line version. It's kept per character.
 
-Commands (`/bf help` or `/bfhelp` lists them in game): `/bf host` (no campfire needed), `/bf chat`, `/bf burn <seconds>` (testing), `/bf ping` (find other Bonfire users), `/bf leave`, `/bf adjust`, `/bf stats`, `/bf pins`, `/bf reset`, `/bf status`, plus beta checks (`/bf api`, `/bf find`, `/bf auras`, `/bf watch`).
+Commands (`/bf help` or `/bfhelp` lists them in game): `/bf host` (no campfire needed), `/bf chat`, `/bf burn <seconds>` (testing), `/bf ping` (find other Bonfire users), `/bf leave`, `/bf adjust`, `/bf rep`, `/bf stats`, `/bf pins`, `/bf reset`, `/bf status`, plus beta checks (`/bf api`, `/bf find`, `/bf auras`, `/bf watch`).
 
 ## Development (Windows)
 
@@ -58,7 +64,7 @@ scripts\lint.ps1
 scripts\test.ps1
 ```
 
-Edit, then `/reload` in game. If Windows blocks the scripts, run them from the VS Code tasks or with `pwsh -ExecutionPolicy Bypass -File scripts	est.ps1`.
+Edit, then `/reload` in game. If Windows blocks the scripts, run them from the VS Code tasks or with `pwsh -ExecutionPolicy Bypass -File scripts\test.ps1`.
 
 ## License
 

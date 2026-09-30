@@ -95,6 +95,7 @@ ns.AddCommand("status", "- channel, position and roll-parser check", function()
 		Bonfire:Printf("  fire: %s (%s)", host, fire.stake > 0 and "gold" or "for fun")
 	end
 	Bonfire:Printf("fires heard: %d", count)
+	Bonfire:Printf("your fire: %s", ns.Beacon:Visibility())
 	local kit, kitName = ns.FindCampfireKit()
 	local buff, yards = ns.CampfireBuff(), ns.Table:PlacedDistance()
 	Bonfire:Printf("at a campfire: %s   campfire buff: %s   your fire: %s   campfire kit: %s", ns.AtCampfire() and "yes" or "no",

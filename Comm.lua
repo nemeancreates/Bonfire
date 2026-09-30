@@ -152,6 +152,14 @@ function Comm:LatestSent(kind, slot)
 	end
 end
 
+-- Only to whoever is within /say range (the Honest Broker's hello), never the channel.
+function Comm:Say(kind, data)
+	self.seq = (self.seq or 0) + 1
+	data.k, data.i, data.n = kind, self.id, self.seq
+	self.sent = self.sent + 1
+	pcall(Bonfire.SendCommMessage, Bonfire, self.PREFIX, Comm.Seal(Bonfire:Serialize(data)), "SAY", nil, "BULK")
+end
+
 function Comm:Whisper(target, kind, data)
 	data = data or {}
 	data.k, data.i = kind, self.id

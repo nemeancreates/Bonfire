@@ -34,6 +34,25 @@ local defaults = {
 	},
 }
 
+-- AceEvent keeps one handler per event per object, so a second Bonfire:RegisterEvent for the same
+-- event silently replaces the first (that's how the table once stopped reading /roll lines).
+-- Every file registers through here instead, and each handler for an event gets called.
+local eventHandlers = {}
+function ns.OnEvent(event, fn)
+	local list = eventHandlers[event]
+	if not list then
+		list = {}
+		eventHandlers[event] = list
+		Bonfire:RegisterEvent(event, function(...)
+			for _, handler in ipairs(list) do
+				local ok, err = pcall(handler, ...)
+				if not ok then geterrorhandler()(err) end
+			end
+		end)
+	end
+	list[#list + 1] = fn
+end
+
 -- Everything on the wire uses "Name-Realm" so names from chat, comms and rolls compare equal.
 function ns.FullName(name)
 	if not name then return end

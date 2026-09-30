@@ -15,6 +15,7 @@ local Ledger = ns.Ledger
 -- Pure (no WoW API) so tests/run.lua can load it. Money moves through Ledger balances;
 -- the host's own gold is never ledgered, so bets by the host are free and never credited.
 local Bets = {
+	MAX_ROUNDS = 6,                                                   -- rounds on one card (as many as the window shows)
 	MAX_BETS = 1,                                                     -- bets per player per round
 	CUTS = { 2, 5, 10, 20 },                                        -- host cut choices, percent
 	MODES = { "Duel", "Deathroll", "Critter Race", "Dice", "Custom" }, -- what a round can be
@@ -30,9 +31,29 @@ function Bets.NewMarket(cut)
 	return { rounds = {}, bets = {}, cut = cut or 0, nextBet = 1, current = 1 }
 end
 
+-- True when every round on the card is settled or called off.
+function Bets.AllFinished(m)
+	for _, r in ipairs(m.rounds) do
+		if r.state ~= "done" and r.state ~= "void" then return false end
+	end
+	return true
+end
+
+-- Whether another round fits: yes below MAX_ROUNDS, or on a full card that's all finished
+-- (the next round starts a fresh card).
+function Bets.CanAddRound(m)
+	return not m or #m.rounds < Bets.MAX_ROUNDS or Bets.AllFinished(m)
+end
+
+-- Returns the new round's number and whether it started a fresh card, or nil when the card
+-- is full and still has rounds going. A fresh card drops only finished rounds: their bets
+-- are already paid out or refunded.
 function Bets.AddRound(m, title, sides, lockAt, game)
+	if not Bets.CanAddRound(m) then return nil end
+	local fresh = #m.rounds >= Bets.MAX_ROUNDS
+	if fresh then m.rounds, m.bets, m.current = {}, {}, 1 end
 	m.rounds[#m.rounds + 1] = { title = title, sides = sides, state = "open", lockAt = lockAt, game = game or "Custom" }
-	return #m.rounds
+	return #m.rounds, fresh
 end
 
 -- Paid money on each side of a round, and the total.

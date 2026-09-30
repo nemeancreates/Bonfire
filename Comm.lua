@@ -12,12 +12,39 @@ local handlers = {}
 -- running Bonfire hears them even if the shared channel isn't connecting us.
 local DISCOVERY = { H = true, Q = true, B = true, X = true }
 
--- Diagnostics for /bf status and /bf ping: what we've sent and heard, and from whom.
+-- Diagnostics for /bf status and /bf ping: what we've sent and heard, and from whom. dropped
+-- counts pieces of our messages the game refused to send; bad counts messages we threw away.
 Comm.sent, Comm.echoes, Comm.received, Comm.peers, Comm.seen = 0, 0, 0, {}, {}
+Comm.dropped, Comm.bad = 0, 0
 
 function Comm.On(kind, fn)
 	handlers[kind] = handlers[kind] or {}
 	table.insert(handlers[kind], fn)
+end
+
+-- Every message carries a checksum of its text. A long message goes out in pieces, and when a
+-- channel is busy the game can drop one; what's left can still decode into nonsense (a table
+-- state with names and gold in the wrong places). A message that doesn't match its checksum
+-- is thrown away instead.
+function Comm.Checksum(text)
+	local h = 0
+	for i = 1, #text do h = (h * 31 + text:byte(i)) % 2147483647 end
+	return h
+end
+
+function Comm.Seal(text)
+	return ("#%x|%s"):format(Comm.Checksum(text), text)
+end
+
+-- The text inside a sealed message, or nil if it doesn't match its checksum. Unsealed text
+-- (an older Bonfire, before 0.6.2) is refused too: it can't be checked.
+function Comm.Unseal(payload)
+	if type(payload) ~= "string" or payload:sub(1, 1) ~= "#" then return end
+	local bar = payload:find("|", 2, true)
+	if not bar then return end
+	local body = payload:sub(bar + 1)
+	if tonumber(payload:sub(2, bar - 1), 16) ~= Comm.Checksum(body) then return end
+	return body
 end
 
 function Comm:Enable()
@@ -59,32 +86,88 @@ function Comm:ChannelId()
 	return id and id > 0 and id or nil
 end
 
-function Comm:Broadcast(kind, data, prio)
+-- sent(done, total, ok) is called as each piece goes out (see SendLatest).
+function Comm:Broadcast(kind, data, prio, sent)
 	local id = self:ChannelId()
 	if not id and not DISCOVERY[kind] then return false end
 	self.seq = (self.seq or 0) + 1
 	data.k, data.i, data.n = kind, self.id, self.seq
-	local text = Bonfire:Serialize(data)
+	local text = Comm.Seal(Bonfire:Serialize(data))
 	self.sent = self.sent + 1
 	if id then
-		Bonfire:SendCommMessage(self.PREFIX, text, "CHANNEL", tostring(id), prio or "NORMAL")
+		Bonfire:SendCommMessage(self.PREFIX, text, "CHANNEL", tostring(id), prio or "NORMAL", sent and function(_, done, total, ok)
+			sent(done, total, ok)
+		end)
 	end
 	if DISCOVERY[kind] then
 		pcall(Bonfire.SendCommMessage, Bonfire, self.PREFIX, text, "SAY", nil, "BULK")
 	end
-	return true
+	return id ~= nil
+end
+
+-- For a message that replaces whatever was sent before it (the table state): only the newest
+-- is worth sending. One goes out at a time. The game limits how fast addons can send, so a
+-- state can take a moment to leave; anything made meanwhile just marks that a newer one is
+-- waiting, and the newest follows as soon as the last piece is out. If a piece was dropped on
+-- the way, the newest state goes again a second later. make() builds the message when it's
+-- sent, or returns nil when there's nothing to send; dropped() is told when a piece was lost.
+Comm.latest = {}
+function Comm:SendLatest(kind, make, prio, dropped)
+	local slot = self.latest[kind]
+	if not slot then
+		slot = {}
+		self.latest[kind] = slot
+	end
+	slot.make, slot.prio, slot.dropped = make, prio, dropped
+	-- Still sending the last one (a stuck send gives up after 20 s).
+	if slot.busy and GetTime() - slot.busy < 20 then
+		slot.waiting = true
+		return
+	end
+	local data = make()
+	slot.busy, slot.waiting, slot.failed = nil, false, false
+	if not data then return end
+	slot.busy = GetTime()
+	local ok = self:Broadcast(kind, data, prio, function(done, total, sent)
+		if sent == false then
+			if not slot.failed and slot.dropped then slot.dropped() end
+			slot.failed = true
+			self.dropped = self.dropped + 1
+		end
+		if done >= total then self:LatestSent(kind, slot) end
+	end)
+	if not ok then slot.busy = nil end
+end
+
+-- After a lost piece the retry waits 1 s, then 2, 4 and 8 while the channel stays busy.
+function Comm:LatestSent(kind, slot)
+	slot.busy = nil
+	if not slot.failed then slot.retry = nil end
+	if slot.waiting then return self:SendLatest(kind, slot.make, slot.prio, slot.dropped) end
+	if slot.failed then
+		slot.retry = math.min((slot.retry or 0.5) * 2, 8)
+		C_Timer.After(slot.retry, function()
+			if not slot.busy then self:SendLatest(kind, slot.make, slot.prio, slot.dropped) end
+		end)
+	end
 end
 
 function Comm:Whisper(target, kind, data)
 	data = data or {}
 	data.k, data.i = kind, self.id
 	self.sent = self.sent + 1
-	Bonfire:SendCommMessage(self.PREFIX, Bonfire:Serialize(data), "WHISPER", target, "ALERT")
+	Bonfire:SendCommMessage(self.PREFIX, Comm.Seal(Bonfire:Serialize(data)), "WHISPER", target, "ALERT")
 end
 
 function Comm:Receive(payload, distribution, sender)
-	local ok, data = Bonfire:Deserialize(payload)
-	if not ok or type(data) ~= "table" then return end
+	local text = Comm.Unseal(payload)
+	local ok, data
+	if text then ok, data = Bonfire:Deserialize(text) end
+	-- Every message says what it is and which client sent it; anything else is damaged.
+	if not ok or type(data) ~= "table" or type(data.k) ~= "string" or type(data.i) ~= "string" then
+		self.bad = self.bad + 1
+		return
+	end
 	if data.i == self.id then
 		if distribution == "CHANNEL" then self.selfSender = sender end
 		self.echoes = self.echoes + 1
@@ -99,7 +182,9 @@ function Comm:Receive(payload, distribution, sender)
 	self.received = self.received + 1
 	sender = ns.FullName(sender)
 	self.peers[sender] = { at = GetTime(), via = distribution }
+	-- One handler tripping over an odd message mustn't stop the others hearing it.
 	for _, fn in ipairs(handlers[data.k] or {}) do
-		fn(data, sender, distribution)
+		local fine, err = pcall(fn, data, sender, distribution)
+		if not fine then geterrorhandler()(err) end
 	end
 end

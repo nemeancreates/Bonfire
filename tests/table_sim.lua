@@ -55,6 +55,16 @@ function LibStub() return hbd end
 local Bonfire = {
 	db = { global = { stats = { played = 0, won = 0 }, stake = { total = 0, confirmed = 0 }, betCut = 5, bet = { amount = 5, unit = 2, total = 0 } }, char = {} },
 }
+-- Stands in for AceSerializer: the same value always gives the same text.
+local function serialize(v)
+	if type(v) ~= "table" then return type(v):sub(1, 1) .. tostring(v) end
+	local keys, parts = {}, {}
+	for k in pairs(v) do keys[#keys + 1] = k end
+	table.sort(keys, function(a, b) return tostring(a) < tostring(b) end)
+	for _, k in ipairs(keys) do parts[#parts + 1] = tostring(k) .. "=" .. serialize(v[k]) end
+	return "{" .. table.concat(parts, ",") .. "}"
+end
+function Bonfire:Serialize(v) return serialize(v) end
 function Bonfire:Print(...) log[#log + 1] = table.concat({ ... }, " ") end
 function Bonfire:Printf(fmt, ...) log[#log + 1] = fmt:format(...) end
 ns.Bonfire = Bonfire
@@ -79,7 +89,12 @@ ns.Beacon = { Announce = function() end, Remove = function() end, fires = {}, Di
 ns.Comm = {
 	selfSender = hostSeat, On = function() end, ChannelId = function() return 1 end,
 	Broadcast = function() return true end, Whisper = function() end,
+	Checksum = function(text) return #text end,
 }
+local stateSends = 0
+function ns.Comm:SendLatest(_, make)
+	if make() then stateSends = stateSends + 1 end
+end
 ns.Trade = {}
 
 function SendChatMessage() end
@@ -225,6 +240,186 @@ local function betResults()
 	assert(ok, err)
 end
 run("Side bet results in /bf history", 1, betResults)
+
+-- One roll per round from a player's own client, even before the host's next update arrives.
+local function oneRollPerRound()
+	local real, rolls = RandomRoll, 0
+	function RandomRoll() rolls = rolls + 1 end
+	local ok, err = pcall(function()
+		local me = "Viewer-Realm"
+		hostSeat = me
+		local gs = { ph = "roll", R = 10, r = 3, wait = { me, "Other-Realm" }, alive = { me, "Other-Realm" }, order = { me, "Other-Realm" } }
+		Table.current = { host = "Host-Realm", state = "playing", game = "oddmanout", id = "g1", gs = gs, seats = { me, "Other-Realm", "Host-Realm" } }
+		Table.game, Table.myRoll = nil, nil
+		local range, can = Table:OmoRollInfo()
+		assert(range == 10 and can, "Roll should be available in the roll phase")
+		Table:OmoRoll()
+		Table:OmoRoll()
+		Table:OmoRoll()
+		assert(rolls == 1, ("expected 1 roll, sent %d"):format(rolls))
+		assert(select(2, Table:OmoRollInfo()) == false, "the button should be spent after one click")
+		gs.r = 4  -- next round, host still lists us as waiting
+		assert(select(2, Table:OmoRollInfo()) == true, "a new round should re-arm the button")
+		Table:OmoRoll()
+		assert(rolls == 2, "the next round's roll didn't go out")
+		gs.ph, gs.r = "pick", 5
+		Table:OmoRoll()
+		assert(rolls == 2 and Table:OmoRollInfo() == nil, "rolled outside the roll phase")
+		gs.ph, gs.wait = "roll", { "Other-Realm" }  -- we're not waiting any more (already read by the host)
+		Table:OmoRoll()
+		assert(rolls == 2, "rolled without owing a roll")
+	end)
+	RandomRoll, hostSeat, Table.current, Table.myRoll = real, "Host-Realm", nil, nil
+	assert(ok, err)
+end
+run("Odd Man Out: one roll per round", 1, oneRollPerRound)
+
+-- The History page and /bf history share these lines: games, side bets and debts.
+local function historyLines()
+	local saved = Bonfire.db.char
+	local ok, err = pcall(function()
+		Bonfire.db.char = { debts = { ["Ratty-Realm"] = 500 } }
+		local h = ns.History.New()
+		ns.History.Add(h, "embers", true, 400, 1)
+		ns.History.AddBet(h, "k", "Oppa vs Gopher", false, -100, 2)
+		Bonfire.db.char.history = h
+		local text = table.concat(Table:HistoryLines(4, 2), "\n")
+		assert(text:find("1 played", 1, true), "no games line")
+		assert(text:find("Side bets: 1 settled", 1, true), "no side bets line")
+		assert(text:find("Oppa vs Gopher", 1, true), "no recent bet")
+		assert(text:find("owe Ratty", 1, true), "no debt line")
+		Bonfire.db.char = {}
+		assert(#Table:HistoryLines(4, 2) == 0, "lines with nothing played")
+	end)
+	Bonfire.db.char = saved
+	assert(ok, err)
+end
+run("History lines", 1, historyLines)
+
+-- The host's Embers roll comes back from the server a moment after the click. Clicking Roll the
+-- moment it lights up must never lose one: every roll sent has to land in the game, once.
+local function laggyRolls()
+	local E, realRandom = ns.Games.embers, RandomRoll
+	local realApply = E.Roll
+	local sent, applied = 0, 0
+	E.Roll = function(...)
+		applied = applied + 1
+		return realApply(...)
+	end
+	function RandomRoll(lo, hi)
+		sent = sent + 1
+		local value = math.random(lo, hi)
+		C_Timer.After(0.35 + math.random() * 0.5, function()  -- the server's round trip
+			Table:OnSystemMessage(("Host rolls %d (%d-%d)"):format(value, lo, hi))
+		end)
+	end
+	local ok, err = pcall(function()
+		newTable("embers", math.random(1, 5), false)
+		Table:Start()
+		for _ = 1, 6000 do
+			advance(0.1)
+			if Table.current.state ~= "playing" then break end
+			if Table:CanRoll() then Table:Roll() end
+		end
+		assert(Table.current.state == "open", "the game never finished")
+		advance(2)
+	end)
+	E.Roll, RandomRoll = realApply, realRandom
+	assert(ok, err)
+	assert(sent == applied, ("%d rolls sent, %d landed in the game"):format(sent, applied))
+end
+run("Embers: laggy host rolls all land", 40, laggyRolls)
+
+-- When quips are said: a roll reaction waits for a click that isn't another Roll, and any
+-- waiting line is dropped once it's stale.
+local function quipTiming()
+	local Quips = ns.Quips
+	local said, realSay, realClick = {}, SendChatMessage, Quips.CHANCE.click
+	function SendChatMessage(line) said[#said + 1] = line end
+	Quips.CHANCE.click = 0  -- no random extras, so only waiting lines speak
+	local function isKind(line, kind) return tContains(Quips.lines[kind], line) end
+	local ok, err = pcall(function()
+		Table.current = { host = hostSeat, state = "playing", game = "embers", seats = { hostSeat } }
+		Quips.last, Quips.pending = nil, nil
+		Quips:Queue("roll_high")
+		Quips:Click("roll")
+		assert(#said == 0, "a roll reaction was said on a Roll click")
+		advance(3)
+		Quips:Click()  -- Bank, 3 s later
+		assert(#said == 1 and isKind(said[1], "roll_high"), "the roll reaction wasn't said on the next other click")
+		advance(10)
+		Quips:Queue("bust")
+		advance(9)
+		Quips:Click()
+		assert(#said == 1, "a stale bust line was said")
+		advance(10)
+		Quips:Queue("win")
+		advance(20)
+		Quips:Click("roll")  -- a game result can ride on any click
+		assert(#said == 2 and isKind(said[2], "win"), "the win line wasn't said")
+		-- Odd Man Out numbers are neither good nor bad: no roll reactions there.
+		advance(10)
+		Table.current.game = "oddmanout"
+		for _ = 1, 200 do Quips:OnSystemMessage("Host rolls 20 (1-20)") end
+		assert(Quips.pending == nil, "an Odd Man Out roll queued a reaction")
+	end)
+	SendChatMessage, Quips.CHANCE.click, Table.current, Quips.pending = realSay, realClick, nil, nil
+	assert(ok, err)
+end
+run("Quips: said at the right moment", 1, quipTiming)
+
+-- What the host sends: nothing at a practice table; with a real player, the state, carrying
+-- the bet card only when it changed. A player who missed the card asks for it again.
+local function stateTraffic()
+	local made, whispers = {}, {}
+	local realSend, realWhisper = ns.Comm.SendLatest, ns.Comm.Whisper
+	function ns.Comm:SendLatest(_, make)
+		local m = make()
+		if m then made[#made + 1] = m end
+	end
+	function ns.Comm:Whisper(to, kind) whispers[#whispers + 1] = { to, kind } end
+	local ok, err = pcall(function()
+		newTable("embers", 3, false)
+		assert(playGame("plays"), "practice game didn't finish")
+		advance(5)
+		assert(#made == 0, ("a practice table sent %d states"):format(#made))
+		Table:OnJoin("Pal-Realm")
+		advance(1)
+		assert(#made == 1 and made[1].mk == nil and made[1].mv == nil, "no plain state for the real player")
+		local t = Table.current
+		t.stake, t.market = 500, ns.Bets.NewMarket(5)
+		ns.Bets.AddRound(t.market, "A vs B", { "A", "B" }, GetServerTime() + 60)
+		Table:Push()
+		advance(1)
+		assert(#made == 2 and made[2].mk and made[2].mv, "the new card didn't go out")
+		Table:Push()
+		advance(1)
+		assert(#made == 2, "an unchanged state went out again")
+		t.lastRoll = 4
+		Table:Push()
+		advance(1)
+		assert(#made == 3 and made[3].mk == nil and made[3].mv == made[2].mv, "the unchanged card was sent again")
+		-- Player side: the same checksum keeps the card; a different one asks for it.
+		local host = t.host
+		local prev = { host = host, market = t.market, mv = made[2].mv, seats = t.seats }
+		local fresh = {}
+		Table.current = prev
+		Table:KeepMarket(fresh, { mv = made[2].mv }, host)
+		assert(fresh.market == prev.market and #whispers == 0, "the matching card wasn't kept")
+		local stale = {}
+		Table:KeepMarket(stale, { mv = 12345 }, host)
+		assert(#whispers == 1 and whispers[1][2] == "R", "a missed card wasn't asked for")
+		assert(stale.market == prev.market and stale.mv == prev.mv, "the old card should stay, marked as old")
+		Table.current = stale
+		advance(6)
+		Table:KeepMarket({}, { mv = 12345 }, host)
+		assert(#whispers == 2, "still missing the card, but stopped asking")
+		Table.current = t
+	end)
+	ns.Comm.SendLatest, ns.Comm.Whisper = realSend, realWhisper
+	assert(ok, err)
+end
+run("Table state: sent only when needed", 1, stateTraffic)
 
 print(("\n%d games, %d failed, %d Odd Man Out games with a winner"):format(games, failures, decided))
 os.exit(failures == 0 and 0 or 1)

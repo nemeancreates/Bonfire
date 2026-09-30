@@ -82,7 +82,8 @@ ns.AddCommand("status", "- channel, position and roll-parser check", function()
 	Bonfire:Printf("me: %s (%s)   last sender seen: %s", ns.Me(),
 		ns.Comm.selfSender and "learned from the channel" or "NOT learned yet", tostring(ns.Comm.lastSender))
 	local comm, now, peers = ns.Comm, GetTime(), 0
-	Bonfire:Printf("comms: sent %d, own echoes %d, from others %d", comm.sent, comm.echoes, comm.received)
+	Bonfire:Printf("comms: sent %d, own echoes %d, from others %d, pieces dropped by the game %d, damaged messages thrown away %d",
+		comm.sent, comm.echoes, comm.received, comm.dropped, comm.bad)
 	for peer, info in pairs(comm.peers) do
 		peers = peers + 1
 		Bonfire:Printf("  Bonfire user heard: %s (%ds ago, via %s)", peer, now - info.at, tostring(info.via))

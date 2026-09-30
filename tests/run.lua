@@ -446,6 +446,22 @@ test("rounds carry their game mode and the cut choices are fixed", function()
 	eq(table.concat(Bets.CUTS, ","), "2,5,10,20")
 end)
 
+test("a card holds six rounds; a full card that's all settled starts over", function()
+	local t = Market(0, { A = 1000 })
+	for i = 3, Bets.MAX_ROUNDS do eq(Bets.AddRound(t.market, "R" .. i, { "X", "Y" }), i) end
+	eq(Bets.CanAddRound(t.market), false)
+	eq(Bets.AddRound(t.market, "Seventh", { "X", "Y" }), nil)
+	eq(#t.market.rounds, Bets.MAX_ROUNDS)
+	Bets.Place(t, "A", 1, 1, 300)
+	for i = 1, Bets.MAX_ROUNDS - 1 do Bets.Void(t, i) end
+	eq(Bets.AddRound(t.market, "Seventh", { "X", "Y" }), nil)  -- one round still open
+	Bets.Resolve(t, Bets.MAX_ROUNDS, 1)
+	local ri, fresh = Bets.AddRound(t.market, "Seventh", { "X", "Y" })
+	eq(ri, 1); eq(fresh, true); eq(#t.market.rounds, 1); eq(#t.market.bets, 0)
+	eq(Ledger.Balance(t, "A"), 1000)  -- the called-off bet came back before the card was cleared
+	eq(select(2, Bets.AddRound(t.market, "Eighth", { "X", "Y" })), false)
+end)
+
 test("a bet counts once it's paid from held credit", function()
 	local t = Market(0, { A = 500 })
 	local ok, bet = Bets.Place(t, "A", 1, 1, 300)
@@ -950,6 +966,96 @@ test("a fold in the pick phase can shrink the die and restart the picks", functi
 	picked(s, { { "P1", 15 }, { "P2", 12 } })
 	Odd.Fold(s, "P3")
 	eq(s.range, 10); eq(next(s.picks), nil); eq(#Odd.Waiting(s), 5)
+end)
+
+-- Comms ------------------------------------------------------------------------
+-- Uses the real AceSerializer from Libs\ (made by scripts\setup.ps1); skipped without it.
+if io.open("Libs/AceSerializer-3.0/AceSerializer-3.0.lua") then
+	dofile("Libs/LibStub/LibStub.lua")
+	dofile("Libs/AceSerializer-3.0/AceSerializer-3.0.lua")
+	local clock, timers, sends, errors = 0, {}, {}, {}
+	rawset(_G, "GetTime", function() return clock end)
+	rawset(_G, "C_Timer", { After = function(delay, fn) timers[#timers + 1] = { at = clock + delay, fn = fn } end })
+	rawset(_G, "geterrorhandler", function() return function(err) errors[#errors + 1] = err end end)
+	ns.FullName = function(name) return name end
+	local stub = {}
+	LibStub("AceSerializer-3.0"):Embed(stub)
+	function stub:SendCommMessage(_, text, distribution, _, _, callback)
+		sends[#sends + 1] = { text = text, distribution = distribution, callback = callback }
+	end
+	ns.Bonfire = stub
+	load("Comm.lua")
+	ns.Bonfire = nil
+	local Comm = ns.Comm
+	Comm.id = "me"
+	function Comm:ChannelId() return 5 end
+
+	test("a sealed message only opens if every piece arrived in order", function()
+		local pad = {}
+		for i = 1, 300 do pad[i] = tostring(i) end  -- varied, so any two pieces differ
+		local text = stub:Serialize({ k = "S", i = "host", s = { "Drskull Peakabu-Realm", "Ratty (bot)" }, pad = table.concat(pad, ",") })
+		eq(Comm.Unseal(Comm.Seal(text)), text)
+		eq(Comm.Unseal(text), nil)  -- unsealed can't be checked
+		local sealed = Comm.Seal(text)
+		local first, a, b, rest = sealed:sub(1, 254), sealed:sub(255, 508), sealed:sub(509, 762), sealed:sub(763)
+		eq(Comm.Unseal(first .. b .. rest), nil)       -- a piece went missing
+		eq(Comm.Unseal(first .. b .. a .. rest), nil)  -- pieces out of order
+	end)
+
+	test("damaged messages are thrown away without an error", function()
+		local heard = 0
+		Comm.On("Z", function() heard = heard + 1 end)
+		Comm.On("Z", function() error("boom") end)
+		Comm.On("Z", function() heard = heard + 1 end)
+		local bad = Comm.bad
+		Comm:Receive(Comm.Seal(stub:Serialize({ k = "Z", n = 3 })), "CHANNEL", "Someone")  -- no sender id: the Lua error you saw
+		Comm:Receive("#1|" .. stub:Serialize({ k = "Z", i = "x" }), "CHANNEL", "Someone")    -- wrong checksum
+		Comm:Receive("junk", "CHANNEL", "Someone")
+		eq(Comm.bad, bad + 3); eq(heard, 0)
+		Comm:Receive(Comm.Seal(stub:Serialize({ k = "Z", i = "other", n = 1 })), "CHANNEL", "Someone")
+		eq(heard, 2); eq(#errors, 1)  -- one handler failing doesn't stop the rest
+	end)
+
+	test("only the newest table state is sent, one at a time, and a lost piece sends it again", function()
+		sends = {}
+		local version, dropped = 0, 0
+		local function make() version = version + 1; return { v = version } end
+		local function onDrop() dropped = dropped + 1 end
+		Comm:SendLatest("S", make, "ALERT", onDrop)
+		eq(#sends, 1)
+		Comm:SendLatest("S", make, "ALERT", onDrop)  -- still going out: these just wait
+		Comm:SendLatest("S", make, "ALERT", onDrop)
+		eq(#sends, 1)
+		sends[1].callback(nil, 100, 300, true)
+		eq(#sends, 1)
+		sends[1].callback(nil, 300, 300, true)  -- last piece out: the newest follows, once
+		eq(#sends, 2); eq(version, 2)
+		sends[2].callback(nil, 150, 300, false)  -- the game dropped a piece
+		sends[2].callback(nil, 300, 300, true)
+		eq(dropped, 1); eq(#sends, 2); eq(Comm.dropped, 1)
+		clock = clock + 1
+		for _, timer in ipairs(timers) do if timer.at <= clock then timer.fn() end end
+		eq(#sends, 3); eq(version, 3)
+		sends[3].callback(nil, 300, 300, true)
+		Comm:SendLatest("S", function() return nil end, "ALERT")  -- nothing new: nothing sent
+		eq(#sends, 3)
+	end)
+else
+	print("(comms tests skipped: run scripts\\setup.ps1 to fetch Libs)")
+end
+
+-- Source checks ----------------------------------------------------------------
+-- AceEvent keeps one handler per event, so two files registering the same event directly means
+-- one silently loses it (the host's /roll lines once went unread that way). Only Core.lua's
+-- ns.OnEvent may call RegisterEvent.
+test("events are registered through ns.OnEvent only", function()
+	local toc = assert(io.open("Bonfire.toc")):read("*a")
+	for file in toc:gmatch("([%w_/\\]+%.lua)") do
+		if file ~= "Core.lua" then
+			local src = assert(io.open((file:gsub("\\", "/")))):read("*a")
+			if src:find(":RegisterEvent(", 1, true) then error(file .. " calls RegisterEvent directly; use ns.OnEvent") end
+		end
+	end
 end)
 
 print(("%d passed, %d failed"):format(passed, failed))

@@ -8,7 +8,8 @@ local Bets = ns.Bets
 local BetsUI = {}
 ns.BetsUI = BetsUI
 
-local MAX_SIDES, MAX_ROUNDS, OWE_ROWS, PAY_ROWS = 6, 6, 3, 8
+local MAX_SIDES, OWE_ROWS, PAY_ROWS = 6, 3, 8
+local MAX_ROUNDS = Bets.MAX_ROUNDS  -- one button per round across the top; the card holds no more
 local SIDE_COLORS = { { 0.4, 0.8, 1 }, { 1, 0.67, 0.2 }, { 0.6, 0.9, 0.4 }, { 0.9, 0.5, 0.9 }, { 1, 0.85, 0.3 }, { 0.9, 0.4, 0.4 } }
 local SIDE_HEX = {}
 for i, c in ipairs(SIDE_COLORS) do SIDE_HEX[i] = ("|cff%02x%02x%02x"):format(c[1] * 255, c[2] * 255, c[3] * 255) end
@@ -132,13 +133,14 @@ local function Build(frame)
 		UI.Tooltip(row.button, "Opens a trade with them. Their side fills in what they owe; once you both accept, they're marked paid automatically.")
 		w.pays[i] = row
 	end
-	-- Switches between the rounds and the payment window once every round is locked.
-	w.toggle = UI.Button(root, "Payments", 84, function()
+	-- Switches between the rounds and the payment window once every round is locked. It sits
+	-- on the right of the title bar, clear of the Table and Bets tabs on the left.
+	w.toggle = UI.Button(root, "Payments", 80, function()
 		viewPayments = not viewPayments
 		ns.UI:Refresh()
 	end)
 	w.toggle:SetHeight(20)
-	w.toggle:SetPoint("TOPLEFT", 78, -4)
+	w.toggle:SetPoint("TOPRIGHT", -30, -4)
 	w.toggle:Hide()
 
 	-- Bet builder: [-] 5(coin) [+] [coin] [Add]   /   Bet: total   [Clear]
@@ -308,13 +310,24 @@ local function Build(frame)
 		end
 		return "Cancel this round and give every stake back. It stays on the card as called off, since bets were paid."
 	end)
-	UI.Tooltip(w.new, "Open betting on another round.")
+	UI.Tooltip(w.new, function()
+		local t = ns.Table.current
+		if t and not Bets.CanAddRound(t.market) then
+			return ("The card holds %d rounds. Finish or remove one to open another; once every round is settled, a new round starts a fresh card."):format(Bets.MAX_ROUNDS)
+		end
+		return "Open betting on another round."
+	end)
 	UI.Tooltip(w.cancel, "Take back the bets you haven't paid for yet.")
 end
 
--- Puts buttons along the bottom-left, in order, hiding the rest.
+-- Puts buttons along the bottom-left, in order, hiding the rest. A button that stays isn't
+-- hidden first: hiding it between mouse down and up would swallow the click.
 local function Layout(list, all)
-	for _, b in ipairs(all) do b:Hide() end
+	local keep = {}
+	for _, b in ipairs(list) do keep[b] = true end
+	for _, b in ipairs(all) do
+		if not keep[b] then b:Hide() end
+	end
 	local prev
 	for _, b in ipairs(list) do
 		b:ClearAllPoints()
@@ -323,6 +336,8 @@ local function Layout(list, all)
 		prev = b
 	end
 end
+
+local ACTIONS  -- every bottom-left button, set once the window is built
 
 local function HideRoundView()
 	for _, b in ipairs(w.rounds) do b:Hide() end
@@ -390,7 +405,7 @@ local function ShowPayments(frame, t)
 			actions[#actions + 1] = w.pay
 		end
 	end
-	Layout(actions, { w.lock, w.void, w.new, w.pay, w.cancel, w.start })
+	Layout(actions, ACTIONS)
 end
 
 function BetsUI:Click(side)
@@ -410,10 +425,34 @@ function BetsUI:Hide()
 	if root then root:Hide() end
 end
 
+-- No rounds yet: the host can open one, everyone else waits for it.
+local function ShowEmpty(frame, t, hosting)
+	HideRoundView()
+	HidePayments()
+	w.toggle:Hide()
+	frame.header:SetText(("%s's fire  |cffffd100Side bets|r"):format(ns.Short(t.host)))
+	frame.sub:SetText("")
+	w.title:SetText("No rounds yet")
+	w.clock:SetText("")
+	w.pool:SetText("")
+	w.mine:SetText(hosting
+		and "Open a round with New round: pick what it is, then name two to six sides, like Oppa vs Gopher."
+		or "The host hasn't opened any side bets yet. Rounds show up here as soon as they do.")
+	w.newRow:SetShown(hosting and adding)
+	if hosting then w.mode:SetText(("|cffffd100%s|r |cffaaaaaav|r"):format(Bets.MODES[mode])) end
+	w.new:SetEnabled(true)
+	Layout(hosting and { w.new } or {}, ACTIONS)
+end
+
 function BetsUI:Show(frame, t)
-	if not root then Build(frame) end
+	if not root then
+		Build(frame)
+		ACTIONS = { w.lock, w.void, w.new, w.pay, w.cancel, w.start }
+	end
 	root:Show()
 	local m, hosting, me = t.market, ns.Table:IsHosting(), ns.Me()
+	if not m or #m.rounds == 0 then return ShowEmpty(frame, t, hosting) end
+	w.new:SetEnabled(Bets.CanAddRound(m))
 	if not viewRound or not m.rounds[viewRound] then viewRound = math.min(m.current or 1, #m.rounds) end
 	local ri = viewRound
 	local r = m.rounds[ri]
@@ -594,7 +633,7 @@ function BetsUI:Show(frame, t)
 		end
 		if hasUnpaid then actions[#actions + 1] = w.cancel end
 	end
-	Layout(actions, { w.lock, w.void, w.new, w.pay, w.cancel, w.start })
+	Layout(actions, ACTIONS)
 	self:Tick()
 end
 

@@ -4,19 +4,24 @@ local Bonfire = ns.Bonfire
 -- Random lines and emotes for the table. Your own character says a line in /say and does an
 -- emote, but only on one of your own clicks in Bonfire (Start, Roll, Bank, Pick, Cash out, Pay,
 -- Join), which is when the game lets an addon speak for you. A moment that comes up between
--- clicks (a game ending, a streak, a roll) waits for your next click; nothing is on a timer.
--- Practice players talk in the Bonfire tab when something happens. All of it is switched off
--- by /bf chat.
+-- clicks (a game ending, a streak, a roll) waits for your next click, but only for a short
+-- while (EXPIRE), so a line is never said long after the moment it's about. A reaction to a
+-- roll is never said on a Roll click: that click makes a new roll, and the line would sound
+-- like it's about that one ("Big number, big smile" as a 1 lands). Practice players talk in the
+-- Bonfire tab when something happens. All of it is switched off by /bf chat.
 local Quips = {
 	CHANCE = {
 		start = 0.4,     -- the host pressed Start
 		finish = 0.6,    -- a game ended (streaks always speak)
-		roll = 0.1,      -- your own roll was high or low
-		bust = 0.35,     -- a 1 in Embers
+		rolled = 0.1,    -- your own Embers roll was high (5-6) or low (2)
+		bust = 0.35,     -- your own Embers roll was a 1
 		cashout = 0.6,   -- you pressed Cash out
-		click = 0.08,    -- any other click in Bonfire
+		click = 0.08,    -- any other click in Bonfire, Roll and Pick included
 		bot = 0.5,       -- a practice player reacts to an event
 	},
+	-- Seconds a waiting line stays good for; after that it's dropped unsaid.
+	EXPIRE = { roll_high = 8, roll_low = 8, bust = 8, win = 30, lose = 30, streak_win = 30, streak_lose = 30 },
+	ROLL_REACTION = { roll_high = true, roll_low = true, bust = true },  -- never said on a Roll click
 	STREAK = 3,      -- wins or losses in a row that count as a streak
 	MIN_GAP = 8,     -- seconds between your own quips
 }
@@ -100,18 +105,23 @@ function Quips:Speak(kind)
 	if list then pcall(DoEmote, list[math.random(#list)]) end
 end
 
--- Something worth saying happened: it's said on your next click, however long that takes.
+-- Something worth saying happened: it's said on your next click, if that comes soon enough.
 function Quips:Queue(kind)
 	if not self:Enabled() or not self:Ready() then return end
-	self.pending = kind
+	self.pending, self.pendingAt = kind, GetTime()
 end
 
--- Called from every button click that can carry speech. A waiting quip goes first; otherwise
--- this kind of click may have a chance of its own, and any click a small one.
+-- Called from every button click that can carry speech; context names the click ("roll",
+-- "cashout", or nil). A waiting quip goes first unless it's gone stale, or it's a roll reaction
+-- and this is a Roll click (it keeps for a following click instead). Otherwise this kind of
+-- click may have a chance of its own, and any click a small one.
 function Quips:Click(context)
 	if not self:Enabled() then return end
-	if self.pending then
-		local kind = self.pending
+	local kind = self.pending
+	if kind and GetTime() - (self.pendingAt or 0) > (self.EXPIRE[kind] or 30) then
+		kind, self.pending = nil, nil
+	end
+	if kind and not (context == "roll" and self.ROLL_REACTION[kind]) then
 		self.pending = nil
 		return self:Speak(kind)
 	end
@@ -182,22 +192,24 @@ function Quips:OnFinish(t)
 	end
 end
 
--- Chat lines: your own roll may earn a quip (a 1 in Embers is a "bust"), said on your next click.
+-- Chat lines: your own Embers roll may earn a quip (a 1 is a "bust"), said on your next click
+-- that isn't another Roll. Only Embers: there a big number is good for everyone still stoking,
+-- while in The Odd Man Out the number itself is neither good nor bad.
 function Quips:OnSystemMessage(msg)
 	local t = ns.Table.current
-	if not t or t.state ~= "playing" or not self:Enabled() then return end
+	if not t or t.state ~= "playing" or t.game ~= "embers" or not self:Enabled() then return end
 	local who, value, low, high = ns.ParseRoll(msg)
 	if not who or low ~= 1 or ns.NameKey(who) ~= ns.NameKey(UnitName("player")) then return end
-	if t.game == "embers" and value == 1 then
+	if value == 1 then
 		if math.random() < self.CHANCE.bust then self:Queue("bust") end
 		return
 	end
 	local kind = self.RollKind(value, high)
-	if kind and math.random() < self.CHANCE.roll then self:Queue(kind) end
+	if kind and math.random() < self.CHANCE.rolled then self:Queue(kind) end
 end
 
 function Quips:Enable()
-	Bonfire:RegisterEvent("CHAT_MSG_SYSTEM", function(_, msg) self:OnSystemMessage(msg) end)
+	ns.OnEvent("CHAT_MSG_SYSTEM", function(_, msg) self:OnSystemMessage(msg) end)
 end
 
 ns.AddCommand("quip", "[kind] - try a line and emote (start win lose streak_win streak_lose roll_high roll_low bust cashout ambient)", function(arg)

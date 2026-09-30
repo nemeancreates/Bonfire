@@ -19,7 +19,7 @@ ns.Table = Table
 
 local MAX_SEATS = 10
 local ROLL_GAP = 4          -- seconds between rolls, so players (slow PCs too) get time to bank
-local ROLL_TIMEOUT = 5      -- give up waiting for a roll that never showed up in chat
+local ROLL_TIMEOUT = 6      -- stop waiting for a roll that never showed up in chat
 local HOST_TIMEOUT = 100    -- drop a table whose host has gone quiet
 local WARN_RANGE = 28       -- yards from the fire before we warn you
 local FOLD_AFTER = Table.FOLD_AFTER  -- seconds past FOLD_RANGE before you fold
@@ -90,7 +90,9 @@ local function UnpackMarket(d)
 	return m
 end
 
-local function Wire(t)
+-- withMarket: include the side-bet card. The regular state leaves it to SendState, which only
+-- sends the card when it has changed (it's the biggest part of the state).
+local function Wire(t, withMarket)
 	local b = {}
 	local tl = {}
 	for i, name in ipairs(t.seats) do
@@ -102,7 +104,7 @@ local function Wire(t)
 		h = t.host, g = t.game, a = t.stake, n = t.maxSeats, st = t.state, s = t.seats, b = b, tl = tl,
 		f = { t.fire[1], floor(t.fire[2] * 10000), floor(t.fire[3] * 10000) },
 		pq = Ledger.Payouts(t), id = t.id, gs = t.gs, w = t.winners, sh = t.share, lr = t.lastRoll,
-		e = t.ends, cl = t.closing and 1 or nil, mk = t.market and PackMarket(t.market) or nil, ra = t.rematchAt,
+		e = t.ends, cl = t.closing and 1 or nil, mk = withMarket and t.market and PackMarket(t.market) or nil, ra = t.rematchAt,
 	}
 end
 
@@ -145,10 +147,11 @@ function Table:Enable()
 	ns.Comm.On("BX", function(d) self:Refuse(("Bet refused: %s."):format(tostring(d.r))) end)
 	ns.Comm.On("OP", function(d, sender) self:OnOddPick(d, sender) end)
 	ns.Comm.On("OPK", function(d, sender) self:OnPickNote(d, sender) end)
-	Bonfire:RegisterEvent("CHAT_MSG_SYSTEM", function(_, msg) self:OnSystemMessage(msg) end)
-	Bonfire:RegisterEvent("UNIT_SPELLCAST_SUCCEEDED", function(_, unit, _, spellID) self:OnCast(unit, spellID) end)
+	ns.Comm.On("R", function(_, sender) self:OnFullRequest(sender) end)
+	ns.OnEvent("CHAT_MSG_SYSTEM", function(_, msg) self:OnSystemMessage(msg) end)
+	ns.OnEvent("UNIT_SPELLCAST_SUCCEEDED", function(_, unit, _, spellID) self:OnCast(unit, spellID) end)
 	-- Count the kits just before a campfire spell goes off, to tell placing from crafting.
-	Bonfire:RegisterEvent("UNIT_SPELLCAST_SENT", function(_, unit, _, _, spellID)
+	ns.OnEvent("UNIT_SPELLCAST_SENT", function(_, unit, _, _, spellID)
 		if unit ~= "player" then return end
 		local name = C_Spell.GetSpellName(spellID)
 		if name and name:lower():find("campfire", 1, true) then self.kitsAtCast = ns.CountCampfireKits() end
@@ -268,7 +271,7 @@ function Table:Host(anywhere)
 	end
 	local x, y, mapID = HBD:GetPlayerZonePosition()
 	if not x then return Bonfire:Print("Can't host here: no map position.") end
-	self.game = nil
+	self.game, self.sentMv, self.lastState = nil, nil, nil
 	self.sawAura, self.noAuraSince = false, nil
 	self.current = {
 		host = ns.Me(), game = ns.ChosenGame(), stake = ns.StakeCopper(), maxSeats = MAX_SEATS, state = "open",
@@ -444,7 +447,7 @@ end
 function Table:PutOut()
 	self:Recap(self.current)
 	ns.Comm:Broadcast("X", {})
-	self.current, self.game, self.awaitingRoll = nil, nil, false
+	self.current, self.game, self.awaitingRoll = nil, nil, nil
 	Bonfire.db.char.hosted = nil
 	ns.UI:Refresh()
 end
@@ -471,9 +474,44 @@ function Table:SendState()
 	t.gs = self.game and self:PackGame() or t.gs
 	t.savedAt = GetServerTime()
 	Bonfire.db.char.hosted = t  -- the ledger is real money; keep it through reloads
-	ns.Comm:Broadcast("S", Wire(t), "ALERT")
+	-- Only real players need the state; practice players live in the host's addon. So a table
+	-- of practice players sends nothing, which keeps the game's send limit out of the way.
+	if self:RealPlayers() > 1 then
+		ns.Comm:SendLatest("S", function() return self:StateMessage() end, "ALERT", function()
+			self.sentMv, self.lastState = nil, nil  -- it didn't arrive whole: send all of it again
+		end)
+	end
 	self:CountStats(t)
 	ns.UI:Refresh()
+end
+
+-- The state as it is right now, built when it's actually sent. The side-bet card goes with it
+-- only when it has changed (or a player asked for it); otherwise just its checksum (mv), so a
+-- player who missed it can tell and ask again. nil when nothing changed since the last send,
+-- unless it's been a while (a player who missed one catches up).
+function Table:StateMessage()
+	local t = self.current
+	if not self:IsHosting() or self:RealPlayers() < 2 then return end
+	local wire, mk = Wire(t), nil
+	if t.market then
+		mk = PackMarket(t.market)
+		wire.mv = ns.Comm.Checksum(Bonfire:Serialize(mk))
+	end
+	-- Compared without the card, which only goes when it changed (or was asked for).
+	local text = Bonfire:Serialize(wire)
+	if wire.mv == self.sentMv and text == self.lastState and GetTime() - (self.lastStateAt or 0) < 15 then return end
+	self.lastState, self.lastStateAt = text, GetTime()
+	if wire.mv and wire.mv ~= self.sentMv then wire.mk = mk end
+	self.sentMv = wire.mv
+	return wire
+end
+
+-- A player saw a card checksum that doesn't match theirs: send the whole card next time.
+function Table:OnFullRequest(sender)
+	local t = self.current
+	if not self:IsHosting() or not tContains(t.seats, sender) then return end
+	self.sentMv = nil
+	self:Push()
 end
 
 -- After a reload the game in progress is gone, so its stakes go back; balances stay.
@@ -507,6 +545,7 @@ function Table:OnJoin(sender)
 	if #t.seats >= t.maxSeats then return ns.Comm:Whisper(sender, "N", { r = "the table is full" }) end
 	t.seats[#t.seats + 1] = sender
 	t.left[sender] = nil  -- back again: any credit is theirs to play with
+	self.sentMv = nil     -- the newcomer needs the whole side-bet card
 	self:Push()
 	ns.Beacon:Announce()
 end
@@ -575,23 +614,26 @@ function Table:Start()
 	ns.Quips:OnStart(t)
 end
 
+-- awaitingRoll is when the host clicked Roll: the next roll line from us in chat is that roll's
+-- result. It's a time rather than a flag cleared by a timer, because each click's timer used to
+-- clear the wait of the click after it, and that roll's result was then ignored (over half of
+-- them, with ordinary lag). A roll that never shows up just stops blocking after ROLL_TIMEOUT.
+local function Awaiting(self)
+	return self.awaitingRoll ~= nil and GetTime() - self.awaitingRoll < ROLL_TIMEOUT
+end
+
 function Table:CanRoll()
-	return self:IsHosting() and self.current.state == "playing" and not self.awaitingRoll
+	return self:IsHosting() and self.current.state == "playing" and not Awaiting(self)
 		and GetTime() - (self.lastRollAt or 0) >= ROLL_GAP
 end
 
 -- From the Roll button: it has to be a real server /roll everyone nearby sees.
 function Table:Roll()
 	if not self:CanRoll() then return end
-	ns.Quips:Click()
-	self.awaitingRoll = true
+	ns.Quips:Click("roll")
+	self.awaitingRoll = GetTime()
 	RandomRoll(1, Embers.sides)
-	C_Timer.After(ROLL_TIMEOUT, function()
-		if self.awaitingRoll then
-			self.awaitingRoll = false
-			ns.UI:Refresh()
-		end
-	end)
+	C_Timer.After(ROLL_TIMEOUT + 0.05, function() ns.UI:Refresh() end)  -- in case it never shows up
 	ns.UI:Refresh()
 end
 
@@ -600,10 +642,10 @@ function Table:OnSystemMessage(msg)
 	if t and self.game and t.game == "oddmanout" and self:IsHosting() and self.game.phase == "roll" then
 		return self:OnOddRollMessage(msg)
 	end
-	if not self.awaitingRoll then return end
+	if not Awaiting(self) or not self.game or t.state ~= "playing" then return end
 	local who, value, low, high = ns.ParseRoll(msg)
 	if not who or ns.NameKey(who) ~= ns.NameKey(UnitName("player")) or low ~= 1 or high ~= Embers.sides then return end
-	self.awaitingRoll = false
+	self.awaitingRoll = nil
 	self.lastRollAt = GetTime()
 	self.current.lastRoll = value
 	local bust = Embers.Roll(self.game, value)
@@ -616,7 +658,7 @@ function Table:OnSystemMessage(msg)
 	if self.game.over then self:Finish() end
 	self:Push()
 	self:BotTurns()
-	C_Timer.After(ROLL_GAP, function() ns.UI:Refresh() end)
+	C_Timer.After(ROLL_GAP + 0.05, function() ns.UI:Refresh() end)  -- Roll lights up again
 end
 
 function Table:Finish()
@@ -747,15 +789,33 @@ function Table:TellPick(name, n, round)
 	end
 end
 
--- Everyone rolls for themselves, all at once; the host reads the rolls from chat.
-function Table:OmoRoll()
+-- Where you stand in the roll phase: the die size, whether you can still click Roll, and the
+-- round. Nothing outside the roll phase. You can't roll again in a round once you've clicked,
+-- even before the host has read your roll and sent word back.
+function Table:OmoRollInfo()
 	local t = self.current
 	if not t or t.state ~= "playing" or t.game ~= "oddmanout" then return end
-	local range = self:IsHosting() and self.game and self.game.range or (t.gs and t.gs.R)
-	if not range or GetTime() - (self.lastOddRoll or 0) < 1 then return end
-	self.lastOddRoll = GetTime()
-	ns.Quips:Click()
+	local me, g = ns.Me(), self:IsHosting() and self.game
+	local phase, range, round, owes
+	if g then
+		phase, range, round, owes = g.phase, g.range, g.round, g.waiting[me]
+	elseif t.gs then
+		phase, range, round, owes = t.gs.ph, t.gs.R, t.gs.r, tContains(t.gs.wait, me)
+	end
+	if phase ~= "roll" or not range then return end
+	local rolled = self.myRoll and self.myRoll.id == t.id and self.myRoll.round == round
+	return range, (owes and not rolled) and true or false, round
+end
+
+-- Everyone rolls for themselves, all at once; the host reads the rolls from chat. One click
+-- is one roll: the button is spent for the round as soon as it's pressed.
+function Table:OmoRoll()
+	local range, canRoll, round = self:OmoRollInfo()
+	if not canRoll then return end
+	self.myRoll = { id = self.current.id, round = round }
+	ns.Quips:Click("roll")
 	RandomRoll(1, range)
+	ns.UI:Refresh()
 end
 
 function Table:OnOddRollMessage(msg)
@@ -955,7 +1015,11 @@ function Table:AddRound(sides, seconds, game)
 	t.market = t.market or Bets.NewMarket(Bonfire.db.global.betCut)
 	seconds = seconds or 120
 	local title = table.concat(sides, " vs ")
-	local ri = Bets.AddRound(t.market, title, sides, GetServerTime() + seconds, game)
+	local ri, fresh = Bets.AddRound(t.market, title, sides, GetServerTime() + seconds, game)
+	if not ri then
+		return self:Refuse(("The card holds %d rounds. Finish or remove one first."):format(Bets.MAX_ROUNDS))
+	end
+	if fresh then Bonfire:Print("Every round on the old card was settled, so this starts a new card.") end
 	Bonfire:Printf("Round %d added (%s): %s. Bets close in %d seconds.", ri, game or "Custom", title, seconds)
 	self:Push()
 	return ri
@@ -1211,7 +1275,7 @@ function Table:OfferHost()
 		return self:Close(true)
 	end
 	p.offered = name
-	ns.Comm:Whisper(name, "P", Wire(self.current))
+	ns.Comm:Whisper(name, "P", Wire(self.current, true))
 	C_Timer.After(4, function()
 		if self.passing == p and p.offered == name then self:OfferHost() end
 	end)
@@ -1235,7 +1299,7 @@ function Table:OnOfferAccepted(sender)
 	self.passing = nil
 	ns.Comm:Broadcast("T", { to = sender }, "ALERT")
 	Bonfire:Printf("%s took over your table.", ns.Short(sender))
-	self.current, self.game, self.awaitingRoll = nil, nil, false
+	self.current, self.game, self.awaitingRoll = nil, nil, nil
 	Bonfire.db.char.hosted = nil
 	ns.UI:Refresh()
 end
@@ -1254,6 +1318,7 @@ function Table:OnTakeover(d, sender)
 		nt.host, nt.state, nt.gs, nt.winners, nt.payouts, nt.heard = ns.Me(), "open", nil, nil, nil, nil
 		Ledger.Init(nt)
 		self.current, self.game, self.away, self.warned = nt, nil, 0, false
+		self.sentMv, self.lastState = nil, nil
 		Bonfire:Print("The host left the fire, so you're hosting the table now.")
 		ns.Beacon:Announce()
 		self:Push()
@@ -1399,6 +1464,7 @@ function Table:OnState(d, sender)
 	end
 	self.pendingJoin = nil
 	t.heard = GetTime()
+	self:KeepMarket(t, d, sender)
 	self.current = t
 	self:NoticeBust(t)
 	self:CountStats(t)
@@ -1408,6 +1474,22 @@ function Table:OnState(d, sender)
 		ns.Quips:OnFinish(t)
 	end
 	ns.UI:Refresh()
+end
+
+-- The host sends the side-bet card only when it changes, and otherwise just its checksum. Keep
+-- the card we have if it still matches; if it doesn't (we missed an update), ask for it again.
+function Table:KeepMarket(t, d, sender)
+	local prev = self.current
+	t.mv = d.mv
+	if d.mk or not d.mv then return end
+	local same = prev and prev.host == sender
+	-- mv is the checksum of the card we hold, so an old card keeps asking until the new one lands.
+	t.market, t.mv = same and prev.market or nil, same and prev.mv or nil
+	if t.market and t.mv == d.mv then return end
+	if GetTime() - (self.askedCardAt or 0) >= 5 then
+		self.askedCardAt = GetTime()
+		ns.Comm:Whisper(sender, "R")
+	end
 end
 
 -- Players see a rolled 1 from the table state: say so once per bust.
@@ -1447,6 +1529,8 @@ function Table:Watchdog()
 	self:CheckExpiry()
 	self:CheckBets()
 	local t = self.current
+	-- Now and then, even with nothing new, so a player who missed an update catches up.
+	if self:IsHosting() and self:RealPlayers() > 1 and GetTime() - (self.lastStateAt or 0) >= 15 then self:Push() end
 	if t and not self:IsHosting() and GetTime() - (t.heard or 0) > HOST_TIMEOUT then
 		self.current = nil
 		Bonfire:Printf("Lost contact with %s's fire.", ns.Short(t.host))
@@ -1469,32 +1553,44 @@ ns.AddCommand("adjust", "<name> <amount> - host only: fix a balance (5g, -20s; +
 	Table:Adjust(who, sign == "-" and -copper or copper)
 end)
 
--- Your record, in a few plain lines.
-local function ShowHistory()
+-- Your record as plain lines: games, gold, streaks, the last few games (up to `games`), side
+-- bets and the last few (up to `bets`), and anything you still owe from a table you left.
+-- Empty when there's nothing yet. /bf history prints it; the window's History page shows it.
+function Table:HistoryLines(games, bets)
+	local lines = {}
+	local function add(fmt, ...) lines[#lines + 1] = fmt:format(...) end
 	local h = Bonfire.db.char.history
-	local bets = h and h.bets
-	if not h or (h.played == 0 and not bets) then return Bonfire:Print("No games yet. Play a round and your record shows up here.") end
-	if h.played > 0 then
-		Bonfire:Printf("Games: %d played, %d won, %d lost (%d%% won).", h.played, h.won, h.lost, math.floor(100 * h.won / h.played + 0.5))
+	local b = h and h.bets
+	if h and h.played > 0 then
+		add("Games: %d played, %d won, %d lost (%d%% won).", h.played, h.won, h.lost, math.floor(100 * h.won / h.played + 0.5))
 		if h.gained > 0 or h.spent > 0 then
-			Bonfire:Printf("Gold: won %s, lost %s, net %s.", ns.CoinString(h.gained), ns.CoinString(h.spent), ns.SignedCoins(h.gained - h.spent))
+			add("Gold: won %s, lost %s, net %s.", ns.CoinString(h.gained), ns.CoinString(h.spent), ns.SignedCoins(h.gained - h.spent))
 		end
 		local now = h.streak > 0 and (h.streak .. " win" .. (h.streak == 1 and "" or "s")) or (-h.streak .. " loss" .. (h.streak == -1 and "" or "es"))
-		Bonfire:Printf("Right now: %s in a row. Best run: %d wins, %d losses.", now, h.bestWin, h.bestLoss)
-		for i = 1, math.min(#h.recent, 5) do
+		add("Right now: %s in a row. Best run: %d wins, %d losses.", now, h.bestWin, h.bestLoss)
+		for i = 1, math.min(#h.recent, games) do
 			local r = h.recent[i]
-			Bonfire:Printf("  %s  %s%s", r.won and "|cff66ff66Won |r" or "|cffff6666Lost|r", ns.GameName(r.game),
+			add("  %s  %s%s", r.won and "|cff66ff66Won |r" or "|cffff6666Lost|r", ns.GameName(r.game),
 				r.net ~= 0 and ("  " .. ns.SignedCoins(r.net)) or "")
 		end
 	end
-	if bets then
-		Bonfire:Printf("Side bets: %d settled, %d won, %d lost. Gold: won %s, lost %s, net %s.", bets.placed, bets.won, bets.lost,
-			ns.CoinString(bets.gained), ns.CoinString(bets.spent), ns.SignedCoins(bets.gained - bets.spent))
-		for i = 1, math.min(#bets.recent, 3) do
-			local r = bets.recent[i]
-			Bonfire:Printf("  %s  %s  %s", r.won and "|cff66ff66Won |r" or "|cffff6666Lost|r", tostring(r.label), ns.SignedCoins(r.net))
+	if b then
+		add("Side bets: %d settled, %d won, %d lost, net %s.", b.placed, b.won, b.lost, ns.SignedCoins(b.gained - b.spent))
+		for i = 1, math.min(#b.recent, bets) do
+			local r = b.recent[i]
+			add("  %s  %s  %s", r.won and "|cff66ff66Won |r" or "|cffff6666Lost|r", tostring(r.label), ns.SignedCoins(r.net))
 		end
 	end
+	for name, copper in pairs(Bonfire.db.char.debts or {}) do
+		add("|cffff6666You still owe %s %s from a table you left.|r", ns.Short(name), ns.Coins(copper))
+	end
+	return lines
+end
+
+local function ShowHistory()
+	local lines = Table:HistoryLines(5, 3)
+	if #lines == 0 then return Bonfire:Print("No games yet. Play a round and your record shows up here.") end
+	for _, line in ipairs(lines) do Bonfire:Print(line) end
 end
 ns.AddCommand("history", "- your wins, losses and gold at Bonfire tables", ShowHistory)
 ns.AddHiddenCommand("stats", "- same as /bf history", ShowHistory)

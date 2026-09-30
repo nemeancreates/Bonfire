@@ -28,11 +28,11 @@ local function FillMoney(copper)
 end
 
 function Trade:Enable()
-	Bonfire:RegisterEvent("TRADE_SHOW", function() self:OnShow() end)
-	Bonfire:RegisterEvent("TRADE_MONEY_CHANGED", function() self:Update() end)
-	Bonfire:RegisterEvent("TRADE_ACCEPT_UPDATE", function() self:Update() end)
-	Bonfire:RegisterEvent("TRADE_CLOSED", function() self:OnClosed() end)
-	Bonfire:RegisterEvent("UI_INFO_MESSAGE", function(_, _, msg) self:OnInfo(msg) end)
+	ns.OnEvent("TRADE_SHOW", function() self:OnShow() end)
+	ns.OnEvent("TRADE_MONEY_CHANGED", function() self:Update() end)
+	ns.OnEvent("TRADE_ACCEPT_UPDATE", function() self:Update() end)
+	ns.OnEvent("TRADE_CLOSED", function() self:OnClosed() end)
+	ns.OnEvent("UI_INFO_MESSAGE", function(_, _, msg) self:OnInfo(msg) end)
 end
 
 -- Must run from a click. Falls back to asking the player to target and retry.

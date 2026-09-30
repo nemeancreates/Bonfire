@@ -2,6 +2,25 @@
 
 Your character says a line in `/say` and does an emote on one of your clicks. Nothing here is on a timer.
 
+## When a line is said
+
+The game only lets an addon speak for you during one of your own clicks in Bonfire (Start, Roll, Bank, a number pick, Pay, Cash out, Join). So a moment that happens between clicks waits for your next click, briefly:
+
+- A reaction to your roll (high, low, fire out) keeps for **8 seconds** and is **never said on a Roll click**, since that click makes a new roll and the line would sound like it's about that one. In practice it's said when you Bank.
+- A win, loss or streak line keeps for **30 seconds**, and any click can carry it (usually Rematch, Cash out or Pay).
+- After that it's dropped, never said out of context later.
+- Nothing is ever said on its own. If you click a lot, a line can't follow another within **8 seconds** (a spam limit, not a timer). `/bf chat` turns all of it off. Practice players say their lines as text in the Bonfire tab.
+
+| Moment | How often | Whose |
+|---|---|---|
+| Start | 40% when the host presses Start | host |
+| Win / Lose | 60% at the end of a game you played | anyone |
+| Win streak / Lose streak | always, at 3+ in a row | anyone |
+| High roll (5-6) / Low roll (2) | 10%, Embers only | the host (the one rolling) |
+| Fire goes out (a 1) | 35%, Embers only | the host |
+| Cashing out | 60% on Cash out | players |
+| Any other click | 8% | anyone |
+
 ## What's in the addon now (generic, same for every race and class)
 
 **Start** (host pressing Start)
@@ -41,13 +60,13 @@ Your character says a line in `/say` and does an emote on one of your clicks. No
 - Somebody check the dice.
 - Emotes: cry, sigh, facepalm
 
-**High roll**
+**High roll** (Embers 5 or 6)
 - Now THAT'S a roll!
 - Feeling lucky!
 - Big number, big smile.
 - Emote: cheer
 
-**Low roll**
+**Low roll** (Embers 2)
 - Oof, small one.
 - The dice hate me.
 - Could've been worse. Maybe.
@@ -65,7 +84,7 @@ Your character says a line in `/say` and does an emote on one of your clicks. No
 - Until next time, friends.
 - Emote: bow
 
-**Any other click** (small chance)
+**Any other click** (8%, Roll and number picks included)
 - Nothing like a fire on a cold night.
 - Anyone else smell marshmallows?
 - This is the life.

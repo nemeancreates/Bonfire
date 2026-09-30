@@ -179,15 +179,19 @@ local function Build()
 	frame.header:SetPoint("RIGHT", frame.burn, "LEFT", -8, 0)
 	frame.header:SetJustifyH("LEFT")
 
+	-- Two short lines under the header: what's happening (it may run to a second line), and the
+	-- money, one line, stacked below it so the two can never print over each other.
 	frame.sub = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
 	frame.sub:SetPoint("TOPLEFT", 14, -50)
 	frame.sub:SetPoint("RIGHT", -14, 0)
 	frame.sub:SetJustifyH("LEFT")
+	frame.sub:SetMaxLines(2)
 
 	frame.money = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-	frame.money:SetPoint("TOPLEFT", 14, -64)
+	frame.money:SetPoint("TOPLEFT", frame.sub, "BOTTOMLEFT", 0, -2)
 	frame.money:SetPoint("RIGHT", -14, 0)
 	frame.money:SetJustifyH("LEFT")
+	frame.money:SetWordWrap(false)
 	frame.money:SetTextColor(0.8, 0.85, 0.7)
 
 	frame.notice = frame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
@@ -229,8 +233,14 @@ local function Build()
 		pay = Button(frame, "Pay host", 130, function() Table:PayHost() end),
 		cashout = Button(frame, "Cash out", 80, function() Table:CashOut() end),
 		leave = Button(frame, "Leave", 90, function() Table:Leave() end),
+		history = Button(frame, "History", 80, function()
+			UI.view = UI.view ~= "history" and "history" or nil
+			UI:Refresh()
+		end),
 	}
 	buttons.leave:SetPoint("BOTTOMRIGHT", -12, 10)
+	buttons.history:SetPoint("BOTTOMRIGHT", -12, 10)
+	Tooltip(buttons.history, "Your games, side bets and gold at Bonfire tables. Kept per character.")
 	Tooltip(buttons.here, function()
 		if ns.AtCampfire() then return "Open a table at the campfire you're standing at." end
 		return "Hosting unlocks at your own campfire, or at anyone else's once you've rested there about a minute and have the Welcoming Campfire buff. You can also light one with a Basic Campfire Kit. /bf host skips this check."
@@ -238,9 +248,13 @@ local function Build()
 	Tooltip(buttons.light, "Uses your Basic Campfire Kit. Your table opens as soon as the fire is lit.")
 	Tooltip(buttons.stoke, function()
 		local t = Table.current
-		return ("Deal in everyone who's ready and start %s."):format(ns.GameName(t and t.game or "embers"))
+		local text = ("Deal in everyone who's ready and start %s."):format(ns.GameName(t and t.game or "embers"))
+		if t and t.stake > 0 then
+			text = text .. ("\n%d of %d players are paid up. Anyone who hasn't paid sits this game out."):format(#Ledger.Eligible(t), #t.seats)
+		end
+		return text
 	end)
-	Tooltip(buttons.oddroll, "Rolls your die. Everyone rolls at once, and the host reads the rolls from chat.")
+	Tooltip(buttons.oddroll, "Rolls your die once this round. Everyone rolls at once, and the host reads the rolls from chat.")
 	Tooltip(buttons.leave, function()
 		local t = Table.current
 		if t and Table:IsHosting() then
@@ -289,33 +303,54 @@ local function Build()
 	UI.gameMenu:Hide()
 	UI.gameButton:Hide()
 
-	-- Switches between the table and its side bets, when the table has a card.
-	UI.viewButton = Button(frame, "Bets", 64, function()
-		UI.view = UI.view == "bets" and "table" or "bets"
-		UI:Refresh()
-	end)
-	UI.viewButton:SetHeight(20)
-	UI.viewButton:SetPoint("TOPLEFT", 10, -4)
-	Tooltip(UI.viewButton, function()
+	-- Two tabs in the title bar at any table: the table, and its side bets.
+	local function ViewTab(label, view, x)
+		local b = Button(frame, label, 56, function()
+			UI.view = view
+			UI:Refresh()
+		end)
+		b:SetHeight(20)
+		b:SetPoint("TOPLEFT", x, -4)
+		b:Hide()
+		return b
+	end
+	UI.tableButton = ViewTab("Table", "table", 10)
+	UI.betsButton = ViewTab("Bets", "bets", 68)
+	Tooltip(UI.tableButton, "The table and its game.")
+	Tooltip(UI.betsButton, function()
 		local t = ns.Table.current
 		if t and t.stake == 0 then return "Side bets use gold, so they're off on a For fun table. Switch to Gambling to use them." end
 		return "Side bets for this table."
 	end)
-	UI.viewButton:Hide()
+end
+
+-- A refresh works out which widgets belong on screen. Hiding a button and showing it again in
+-- the same refresh drops a click in progress (it's hidden between mouse down and mouse up), and
+-- the window refreshes often (every table update, aura change and countdown tick). So a refresh
+-- only marks what it shows with Use, and hides whatever it didn't mark at the end.
+local used
+
+local function Use(w)
+	used[w] = true
+	if not Locked(w) then w:Show() end
+end
+
+local function HideUnused()
+	local marks = used
+	used = nil
+	local function check(w)
+		if not marks[w] and not Locked(w) then w:Hide() end
+	end
+	for _, row in ipairs(rows) do check(row.button) end
+	for _, b in pairs(buttons) do check(b) end
+	for _, b in ipairs(pickButtons) do check(b) end
+	check(stake)
 end
 
 local function ClearRows()
 	frame.burn:SetText("")
 	frame.money:SetText("")
-	for _, row in ipairs(rows) do
-		row:SetText("")
-		row.button:Hide()
-	end
-	for _, b in pairs(buttons) do
-		if not Locked(b) then b:Hide() end
-	end
-	for _, b in ipairs(pickButtons) do b:Hide() end
-	stake:Hide()
+	for _, row in ipairs(rows) do row:SetText("") end
 end
 
 -- Shows the given bottom-left buttons in order.
@@ -325,8 +360,8 @@ local function LayoutLeft(list)
 		if not Locked(b) then
 			b:ClearAllPoints()
 			if prev then b:SetPoint("LEFT", prev, "RIGHT", 4, 0) else b:SetPoint("BOTTOMLEFT", 12, 10) end
-			b:Show()
 		end
+		Use(b)
 		prev = b
 	end
 end
@@ -339,8 +374,33 @@ local function SetRow(i, text, label, action, enabled)
 		row.button:SetText(label)
 		row.button.action = action
 		row.button:SetEnabled(enabled ~= false)
-		row.button:Show()
+		Use(row.button)
 	end
+end
+
+-- True if name was dealt into the game being played (their stake is in the pot).
+local function InGame(t, name)
+	local gs = t.gs
+	if t.state ~= "playing" or not gs then return false end
+	for _, p in ipairs(gs.p or {}) do
+		if p[1] == name then return true end
+	end
+	return tContains(gs.order or {}, name)
+end
+
+-- Your record: games, gold, streaks, side bets and anything you still owe from a table you left.
+local function ShowHistory()
+	frame.header:SetText("Your record")
+	local lines = ns.Table:HistoryLines(4, 2)
+	if #lines == 0 then
+		frame.sub:SetText("No games yet. Play a round and your record shows up here.")
+	else
+		frame.sub:SetText(lines[1])
+		frame.money:SetText(lines[2] or "")
+		for i = 3, #lines do SetRow(i - 2, lines[i]) end
+	end
+	buttons.history:SetText("Back")
+	Use(buttons.history)
 end
 
 local function ShowFires()
@@ -373,7 +433,9 @@ local function ShowFires()
 		end
 	end
 	RefreshStake()
-	stake:Show()
+	Use(stake)
+	buttons.history:SetText("History")
+	Use(buttons.history)
 
 	-- At a campfire: host there. Otherwise light one with the kit, or explain what's missing.
 	local atFire, kit = ns.AtCampfire(), ns.FindCampfireKit()
@@ -393,11 +455,11 @@ local STATUS = { [0] = "|cff66ccffbanked|r", [1] = "|cffffaa33stoking|r", [2] = 
 local function OddSubtitle(gs)
 	local left = gs.dl and gs.dl - GetServerTime()
 	local clock = left and left >= 0 and ("  |cffffffff%ds|r"):format(left) or ""
-	local reach = (gs.re or 0) > 0 and ("  |cffffcc33near misses count: within %d|r"):format(gs.re) or ""
-	local wipe = gs.last and gs.last.w == 1 and "  |cffff6666wipeout, replaying|r" or ""
-	local head = ("Round %d  |  d%d"):format(gs.r, gs.R)
-	if gs.ph == "pick" then return head .. "  |  pick your number" .. clock end
-	if gs.ph == "roll" then return head .. "  |  everyone roll!" .. clock .. reach .. wipe end
+	local reach = (gs.re or 0) > 0 and ("  |cffffcc33near misses within %d|r"):format(gs.re) or ""
+	local wipe = gs.last and gs.last.w == 1 and "  |cffff6666wipeout, replay|r" or ""
+	local head = ("Round %d, d%d:"):format(gs.r, gs.R)
+	if gs.ph == "pick" then return head .. " pick your number" .. clock end
+	if gs.ph == "roll" then return head .. " everyone roll!" .. clock .. reach .. wipe end
 	return head
 end
 
@@ -408,7 +470,7 @@ local function Subtitle(t)
 	elseif t.state == "playing" and gs then
 		local last = ""
 		if t.lastRoll == 1 then
-			last = "   |cffff6666rolled a 1: fire out, unbanked pots lost|r"
+			last = "   |cffff6666a 1: fire out, pots lost|r"
 		elseif t.lastRoll then
 			last = ("   last roll: |cffffffff%d|r"):format(t.lastRoll)
 		end
@@ -419,12 +481,17 @@ local function Subtitle(t)
 		local names = {}
 		for i, name in ipairs(t.winners) do names[i] = ns.Short(name) end
 		local won = t.stake > 0 and t.share
-			and ("  (" .. ns.Coins(t.share) .. " each, " .. ns.SignedCoins(t.share - t.stake) .. " profit)") or ""
+			and ("  " .. ns.SignedCoins(t.share - t.stake) .. (#t.winners > 1 and " each" or "")) or ""
 		local wait = t.rematchAt and t.rematchAt - GetServerTime() or 0
-		local nextGame = wait > 0 and ("  |cffffffffNext game in %ds: cash out now if you're done.|r"):format(wait) or ""
+		local nextGame = wait > 0 and ("  |cffffffffnext game in %ds|r"):format(wait) or ""
 		return "Winner: |cff66ff66" .. table.concat(names, ", ") .. "|r" .. won .. nextGame
 	elseif t.stake > 0 then
-		return ("Stake %s. Pay the host to be dealt in."):format(ns.Coins(t.stake))
+		-- Only paid-up players are dealt in; say how many that is, so nobody's surprised.
+		local ready, seated = #Ledger.Eligible(t), #t.seats
+		if ready < seated then
+			return ("Stake %s. %d of %d paid up; the unpaid sit out."):format(ns.Coins(t.stake), ready, seated)
+		end
+		return ("Stake %s. Everyone's paid up."):format(ns.Coins(t.stake))
 	end
 	return ("For fun. Waiting for players (%d/%d)."):format(#t.seats, t.maxSeats)
 end
@@ -449,22 +516,31 @@ local function MoneyLine(t)
 		for _, name in ipairs(t.seats) do
 			if name ~= me then holding = holding + math.max(0, Ledger.Balance(t, name)) end
 		end
-		for _, p in ipairs(Ledger.PayIns(t)) do incoming = incoming + p[2] end
 		local parts = {}
-		parts[#parts + 1] = holding > 0 and ("You're holding %s of players' credit; pay it out when they cash out."):format(ns.CoinString(holding))
-			or "You aren't holding any player credit."
-		if incoming > 0 then parts[#parts + 1] = ("Players still owe you %s to play."):format(ns.CoinString(incoming)) end
+		if t.state == "playing" then
+			-- Stakes in the running game have left everyone's credit for the pot. Counting them
+			-- as owed would read as if players were dealt in without paying.
+			parts[#parts + 1] = ("In the pot: %s."):format(ns.CoinString(t.stake * #(t.committed or {})))
+			if holding > 0 then parts[#parts + 1] = ("You also hold %s for players."):format(ns.CoinString(holding)) end
+			return table.concat(parts, "  ")
+		end
+		for _, p in ipairs(Ledger.PayIns(t)) do incoming = incoming + p[2] end
+		parts[#parts + 1] = holding > 0 and ("You hold %s for players."):format(ns.CoinString(holding)) or "You hold no player credit."
+		if incoming > 0 then parts[#parts + 1] = ("Owed to you: %s."):format(ns.CoinString(incoming)) end
 		return table.concat(parts, "  ")
 	end
 	local credit, owes = Ledger.Balance(t, me), Ledger.Owes(t, me)
 	local r = t.tally and t.tally[me]
-	local net = r and r.w + r.l > 0 and ("  Net here: " .. ns.SignedCoins(r.net)) or ""
-	if owes > 0 and t.state ~= "settling" then
-		return ("You owe the host %s to be dealt in.%s"):format(ns.CoinString(owes), net)
+	local net = r and r.w + r.l > 0 and ("  Net " .. ns.SignedCoins(r.net)) or ""
+	if InGame(t, me) then
+		local extra = credit > 0 and ("  Host also holds %s."):format(ns.CoinString(credit)) or ""
+		return ("Your stake is in the pot.%s%s"):format(extra, net)
+	elseif owes > 0 and t.state ~= "settling" then
+		return ("Pay the host %s to be dealt in.%s"):format(ns.CoinString(owes), net)
 	elseif credit > 0 then
-		return ("The host holds %s for you. Cash out to be paid.%s"):format(ns.CoinString(credit), net)
+		return ("Host holds %s for you; Cash out to collect.%s"):format(ns.CoinString(credit), net)
 	end
-	return "Nothing is being held for you." .. net
+	return "Nothing is held for you." .. net
 end
 
 -- Queue of trades the host has to make: payouts first, then pay-ins.
@@ -526,12 +602,14 @@ local function ShowOddControls(t, left)
 		for i, b in ipairs(pickButtons) do
 			if i <= gs.R then
 				b:SetText(i == picked and ("|cffffd100" .. i .. "|r") or tostring(i))
-				b:Show()
+				Use(b)
 			end
 		end
 	elseif gs.ph == "roll" then
-		buttons.oddroll:SetText(("Roll d%d"):format(gs.R))
-		buttons.oddroll:SetEnabled(waitingMe)
+		-- Spent the moment it's clicked, so a second click can't send a second /roll.
+		local _, canRoll = ns.Table:OmoRollInfo()
+		buttons.oddroll:SetText(canRoll and ("Roll d%d"):format(gs.R) or (waitingMe and "Rolling..." or "Rolled"))
+		buttons.oddroll:SetEnabled(canRoll or false)
 		left[#left + 1] = buttons.oddroll
 	end
 end
@@ -606,7 +684,7 @@ local function ShowTable(t)
 			buttons.stoke:SetEnabled(#Ledger.Eligible(t) >= 2 and wait <= 0)
 			left[#left + 1] = buttons.stoke
 			RefreshStake()
-			stake:Show()
+			Use(stake)
 		elseif t.state == "playing" and t.game ~= "oddmanout" then
 			buttons.roll:SetEnabled(Table:CanRoll())
 			left[#left + 1] = buttons.roll
@@ -628,8 +706,9 @@ local function ShowTable(t)
 			buttons.leave:SetEnabled(true)
 		end
 	else
+		-- Mid-game your stake is in the pot, so what you "owe" is for the next game: no Pay button yet.
 		local owes = Ledger.Owes(t, me)
-		if owes > 0 and t.state ~= "settling" then
+		if owes > 0 and t.state ~= "settling" and not InGame(t, me) then
 			buttons.pay:SetText("Pay host " .. ns.Coins(owes))
 			buttons.pay:SetWidth(math.max(90, buttons.pay:GetFontString():GetStringWidth() + 20))
 			left[#left + 1] = buttons.pay
@@ -652,14 +731,14 @@ local function ShowTable(t)
 		left[#left + 1] = buttons.bank
 	end
 	LayoutLeft(left)
-	buttons.leave:Show()
+	Use(buttons.leave)
 end
 
 function UI:Enable()
 	local function refresh() self:Refresh() end
-	Bonfire:RegisterEvent("BAG_UPDATE_DELAYED", refresh)
-	Bonfire:RegisterEvent("PLAYER_REGEN_ENABLED", refresh)
-	Bonfire:RegisterEvent("UNIT_AURA", function(_, unit) if unit == "player" then self:Refresh() end end)
+	ns.OnEvent("BAG_UPDATE_DELAYED", refresh)
+	ns.OnEvent("PLAYER_REGEN_ENABLED", refresh)
+	ns.OnEvent("UNIT_AURA", function(_, unit) if unit == "player" then self:Refresh() end end)
 	-- The fire timer ticks every second without redrawing the whole window.
 	C_Timer.NewTicker(1, function()
 		local t = ns.Table.current
@@ -676,35 +755,46 @@ function UI:Enable()
 	end)
 end
 
-function UI:Refresh()
-	if not frame or not frame:IsShown() then return end
-	ClearRows()
+local function Draw()
 	local t = ns.Table.current
-	local market = t and t.market
-	UI.viewButton:SetShown(market ~= nil)
-	-- Side bets are gold bets: gray the tab out on a For fun table so it can't be used by accident.
-	UI.viewButton:SetEnabled(market ~= nil and t.stake > 0)
-	if not market or t.stake == 0 then UI.view = nil end
+	-- At a table: the Table and Bets tabs. Side bets are gold bets, so Bets is greyed on a For fun
+	-- table so it can't be used by accident.
+	UI.tableButton:SetShown(t ~= nil)
+	UI.betsButton:SetShown(t ~= nil)
+	UI.betsButton:SetEnabled(t ~= nil and t.stake > 0)
+	if UI.view == "bets" and (not t or t.stake == 0) then UI.view = nil end
+	if UI.view == "history" and t then UI.view = nil end  -- sitting down takes you to the table
+	local inBets = UI.view == "bets"
+	-- The tab you're on shows in gold.
+	UI.tableButton:SetText(inBets and "Table" or "|cffffd100Table|r")
+	UI.betsButton:SetText(inBets and "|cffffd100Bets|r" or "Bets")
 	-- The game picker: on the main menu, and at your own table between games.
-	local inBets = market and UI.view == "bets"
-	local pickable = not inBets and (not t or (ns.Table:IsHosting() and t.state == "open"))
+	local pickable = not inBets and UI.view ~= "history" and (not t or (ns.Table:IsHosting() and t.state == "open"))
 	UI.gameButton:SetShown(pickable)
 	if pickable then
 		UI.gameButton:SetText(("Game: |cffffd100%s|r  v"):format(ns.GameName(t and t.game or ns.ChosenGame())))
 	end
-	if market and UI.view == "bets" then
-		UI.viewButton:SetText("Table")
+	if inBets then
 		frame.burn:SetText(BurnText(t))
 		ns.BetsUI:Show(frame, t)
 		buttons.leave:SetText(ns.Table:IsHosting() and "Close table" or "Leave")
 		buttons.leave:SetWidth(100)
 		buttons.leave:SetEnabled(true)
-		buttons.leave:Show()
+		Use(buttons.leave)
 		return
 	end
 	ns.BetsUI:Hide()
-	UI.viewButton:SetText("Bets")
+	if UI.view == "history" then return ShowHistory() end
 	if t then ShowTable(t) else ShowFires() end
+end
+
+function UI:Refresh()
+	if not frame or not frame:IsShown() or used then return end  -- already drawing: that draw covers it
+	used = {}
+	ClearRows()
+	local ok, err = pcall(Draw)
+	HideUnused()  -- also clears `used`, so an error can't leave the window stuck
+	if not ok then geterrorhandler()(err) end
 end
 
 -- A red line near the bottom of the window for a few seconds, for when a click is refused.

@@ -21,6 +21,11 @@ local function play(n, pickFn)
 			if guard > 1 then info.repicks = info.repicks + 1 end
 			for _, name in ipairs(Odd.Waiting(s)) do Odd.Pick(s, name, pickFn(s, name)) end
 		else
+			-- A pick above the die could never be hit; the rules must never allow it.
+			for _, name in ipairs(Odd.Alive(s)) do
+				local p = s.picks[name]
+				if not p or p > s.range then info.bad = (info.bad or 0) + 1 end
+			end
 			for _, name in ipairs(Odd.Waiting(s)) do Odd.Roll(s, name, math.random(1, s.range)) end
 			if not info.first and s.last then info.first = #s.last.knocked end
 		end
@@ -35,7 +40,7 @@ end
 
 local function report(label, n, pickFn)
 	local rounds, wipe, repick, first, stuck = {}, 0, 0, 0, 0
-	local wins, noWinner = {}, 0
+	local wins, noWinner, bad = {}, 0, 0
 	for i = 1, n do wins[i] = 0 end
 	for _ = 1, GAMES do
 		local s, info = play(n, pickFn)
@@ -44,6 +49,7 @@ local function report(label, n, pickFn)
 		else
 			rounds[#rounds + 1] = s.round - 1
 			wipe = wipe + s.wipeouts
+			bad = bad + (info.bad or 0)
 			if info.repicks > 0 then repick = repick + 1 end
 			first = first + (info.first or 0)
 			if s.winner then wins[tonumber(s.winner:sub(2))] = wins[tonumber(s.winner:sub(2))] + 1 else noWinner = noWinner + 1 end
@@ -52,9 +58,9 @@ local function report(label, n, pickFn)
 	local total, lo, hi = 0, math.huge, 0
 	for _, r in ipairs(rounds) do total = total + r end
 	for i = 1, n do lo, hi = math.min(lo, wins[i]), math.max(hi, wins[i]) end
-	print(("%-22s n=%-2d rounds avg %5.1f  median %3d  p90 %3d  max %4d | wipeouts/game %.2f | repick in %3.0f%% | 1st round knocks %.1f | best/worst seat wins %.1f%%/%.1f%% | stuck %d | no winner %d")
+	print(("%-22s n=%-2d rounds avg %5.1f  median %3d  p90 %3d  max %4d | wipeouts/game %.2f | repick in %3.0f%% | 1st round knocks %.1f | best/worst seat wins %.1f%%/%.1f%% | stuck %d | no winner %d | picks above die %d")
 		:format(label, n, total / #rounds, percentile(rounds, 0.5), percentile(rounds, 0.9), rounds[#rounds],
-			wipe / GAMES, 100 * repick / GAMES, first / GAMES, 100 * hi / GAMES, 100 * lo / GAMES, stuck, noWinner))
+			wipe / GAMES, 100 * repick / GAMES, first / GAMES, 100 * hi / GAMES, 100 * lo / GAMES, stuck, noWinner, bad))
 end
 
 local function uniform(s) return math.random(1, s.range) end

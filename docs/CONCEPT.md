@@ -48,20 +48,23 @@ The 35 yd ring around the fire doubles as an arena.
 Rules live in `Games/Deathroll.lua`. Every player has to click Roll within a time limit (8 s) or they fold instantly. Real `/roll`s are read from chat by the host.
 
 - **All out:** everyone rolls 1 to 100 at once. If an even number rolled, the **highest and lowest** rollers are knocked out. If odd, only the **highest** goes. Ties for either end re-roll among just the tied players. This repeats until two remain.
-- **The duel:** the last two take turns. The first rolls 1 to 100, each next roll is 1 to the roll before, and whoever rolls a 1 loses. Folding hands the win to the other player.
+- **The duel:** the last two take turns. In a classic 1v1 the first rolls 1 to 100; in the final roll-off of an all-out game (3 or more players) it starts at 1 to 10. Each next roll is 1 to the roll before, and whoever rolls a 1 loses. Folding hands the win to the other player.
 - **1v1 tables:** two players go straight to the duel while everyone else bets on a side (side bets: see below).
 - Everyone timing out together leaves no winner and the pot is returned.
 
 Both modes need every player's roll to be visible to the host, which is the first thing to check in the two-player test.
 
-## The Odd Man Out (rules built and simulated, not wired to the table yet)
+## The Odd Man Out (playable: picker, number buttons, timers, practice players)
 
 Rules in `Games/OddManOut.lua`; play thousands of games with `scripts\sim.ps1`.
 
 - Two to ten players. Everyone secretly picks a number. Each round everyone rolls once; you're knocked out if any *other* player rolled your number. Players can pick the same number. Last one standing wins.
-- The die is d20 while six or more players are left and d10 with five or fewer. When it shrinks, everyone picks again in the new range.
-- A round that would knock out everyone left is replayed instead. Anyone who doesn't pick (15 s) or roll (8 s) in time folds.
-- Simulation (20,000 games per size, random picks): 5.6 rounds on average for two players up to 9.1 for ten (median 4 to 8, 90th percentile 12 to 16), never stuck, every seat wins an equal share, about 5 to 7% of games have a replayed wipeout round. Two players on d10 have the long tail (18% chance a round decides it), up to 50-plus rounds in rare games.
+- **The die shrinks:** d20 while six or more players are left, d10 with five or fewer. Whenever it shrinks, everyone picks again in the new range and the old picks are thrown away, so nobody can be left holding a number the die can't reach. The simulation checks this on every round of every game (0 violations in more than 300,000 games).
+- **Near misses stop endless games:** after a round where nobody goes out, a roll within 1 of your number counts too, then within 2 (within 4 on a d20) and no wider. The numbers wrap (10 is next to 1) so no pick is safer. Reach goes back to 0 as soon as someone is knocked out or the die shrinks.
+- **Wipeouts:** if a round would knock out everyone left, nobody goes, the reach backs off one step, and the round is replayed.
+- Anyone who doesn't pick (15 s) or roll (10 s) in time folds.
+- **Simulation** (20,000 games per size, random picks): 2.9 rounds on average for two players up to 6.0 for ten. The typical game is 2 to 6 rounds, 90% finish within 5 to 9, and the longest game in the whole run was 27. Every seat wins an equal share. About one game in three has a replayed wipeout round. Before the near-miss rule, two players on d10 averaged 5.6 rounds with games up to 51.
+- The worst case, everyone picking the same number, still finishes (longest 34 rounds).
 - Needs each player's own `/roll` to be visible to the host (the two-player roll test), and picks are held by the host's addon and revealed when a player is knocked out.
 
 ## Side bets (built; needs two-player testing)
@@ -82,6 +85,14 @@ Six low-poly critters (rat, gopher, frog, squirrel, rabbit, and one more), shown
 ## Main menu and game picker (design)
 
 `/bf` stays the front door. When you host, the lobby gets a game picker (Embers, Deathroll, Critter Race, Duel) above the bet builder, and each game has its own play view inside the same window. The table only knows "the current game" and calls into a small shared game interface, so adding a game doesn't touch the ledger or the bets.
+
+## Quips and voice lines (built; the delivery rules need testing in game)
+
+Random lines the host, and people at the fire, say in situations: a fire going out, a big win, a knockout, a near miss, a payout. Ideas and limits:
+- **Practice players and the addon** can "speak" as local text (the Bonfire tab, or a small speech label by the window) without touching anyone's chat.
+- **A real character speaking** (`/say`, emotes) has to come from a click the game counts as yours, so Roll, Bank, Pick and Pay clicks are natural triggers.
+- Lines could come in packs (cheerful, dramatic, salty) keyed by event, chosen at random without repeating.
+- **Open questions:** who speaks (host only, or every player's own client), whether it's text only or also emotes, and how to switch it off.
 
 ## Settlement: prepaid or a running tab
 

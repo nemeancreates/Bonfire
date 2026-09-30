@@ -46,10 +46,17 @@ A: `/bf burn 90` (fire has 90 s left). Watch the countdown on both clients. Star
 2. B: pick an amount, click **Bet** on a side. B's row should say *owes*; A's list shows B under "owes" with **Collect**.
 3. B: **Pay host** (trade, both click Trade). B's bet should flip to *paid* and the pool should grow on both screens.
 4. A: **Lock bets** on every round (Shift-click locks them all). B's window should switch to a **Payments** list showing what B owes across all rounds; B pays once, A sees B flip to paid. A presses **Start games** (unpaid bets are dropped), then **Winner** on a side. Winners' credit shows as *held*; the other side shows *lost*. A bet on a round nobody bet against should be refunded.
+   B: after A presses **Winner**, B's chat should say "Your bet on ... won" if B backed the winner, and `/bf history` should show a *Side bets* line (settled, won, lost, gold) with the round listed. A round should never count twice (try `/reload` and rejoin the table). A's own bets, and a refunded round, should not appear.
 5. Try two rounds at once and more than one bet from the same player.
 6. A: move the **Host cut** slider (2, 5, 10, 20%) before any bets, then check it locks once B's bet is paid. Try **Remove round** on a round with no paid bets (later rounds renumber), and **Call off** on one with a paid bet (it refunds and stays listed). Use **New round** and the game dropdown to open another; the game mode (Duel, Deathroll, ...) should show at the top of B's window.
 
-## 8. Tidy up
+## 8. The Odd Man Out
+1. A: pick **The Odd Man Out** in the Game button before starting. B joins. (Practice players can fill more seats.)
+2. A: **Start**. Both players get a row of number buttons: pick one within 15 seconds (or a random one is picked for you).
+3. Everyone clicks **Roll** at once. **Key check:** does A's window register B's roll? If B always folds after 8 seconds, A can't see B's `/roll` lines, and this game (and Deathroll) can't work between players yet.
+4. Play to a winner. Watch for the die shrinking when six players drop to five (everyone picks again), near misses after a quiet round, and stakes going to the winner.
+
+## 9. Tidy up
 A closes the table. B should see "put out their fire" and the pin should disappear within ~90 s.
 
 ## What to send back

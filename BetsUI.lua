@@ -104,7 +104,7 @@ local function Build(frame)
 	w.mine:SetPoint("RIGHT", root, "RIGHT", -14, 0)
 	w.mine:SetJustifyH("LEFT")
 	w.mine:SetJustifyV("TOP")
-	w.mine:SetHeight(52)
+	w.mine:SetHeight(96)
 	for i = 1, OWE_ROWS do
 		local row = {}
 		row.text = root:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
@@ -504,23 +504,30 @@ function BetsUI:Show(frame, t)
 		end
 	end
 
-	-- Your bets on this round (or, as host, who you still have to collect from).
-	local lines, hasUnpaid = {}, false
+	-- Every bet you've made on the card in one list, so you don't have to click through the
+	-- rounds (or, as host, who you still have to collect from, below).
+	local lines, hasUnpaid, staked, count = {}, false, 0, 0
 	if canBet then
-		for _, b in ipairs(m.bets) do
-			if b.who == me and b.round == ri then
-				local status
-				if r.state == "done" then
-					local pay, refunded = Bets.Payouts(m, ri, r.winner)
-					local got = pay[b.id] or 0
-					status = refunded and "refunded"
-						or (got > 0 and ("|cff66ff66won %s|r |cff999999(%.1fx)|r"):format(ns.CoinString(got), got / b.amount) or "|cffff6666lost|r")
-				elseif b.paid then
-					status = "|cff66ff66paid|r"
-				else
-					status, hasUnpaid = "|cffff6666owes|r", true
+		for i, rd in ipairs(m.rounds) do
+			for _, b in ipairs(m.bets) do
+				if b.who == me and b.round == i then
+					count, staked = count + 1, staked + b.amount
+					local status
+					if rd.state == "done" then
+						local pay, refunded = Bets.Payouts(m, i, rd.winner)
+						local got = pay[b.id] or 0
+						status = refunded and "refunded"
+							or (got > 0 and ("|cff66ff66won %s|r |cff999999(%.1fx)|r"):format(ns.CoinString(got), got / b.amount) or "|cffff6666lost|r")
+					elseif b.paid then
+						status = "|cff66ff66paid|r"
+					else
+						status = "|cffff6666owes|r"
+						if i == ri then hasUnpaid = true end
+					end
+					lines[#lines + 1] = ("%s%d|r  %s on %s%s|r   %s"):format(
+						i == ri and "|cffffd100" or "|cff999999", i, ns.CoinString(b.amount),
+						SIDE_HEX[b.side] or "", rd.sides[b.side] or "?", status)
 				end
-				lines[#lines + 1] = ("%s on %s%s|r   %s"):format(ns.CoinString(b.amount), SIDE_HEX[b.side] or "", r.sides[b.side] or "?", status)
 			end
 		end
 	end
@@ -540,9 +547,9 @@ function BetsUI:Show(frame, t)
 	if #owing > 0 then
 		w.mine:SetText("")
 	elseif #lines > 0 then
-		w.mine:SetText(table.concat(lines, "\n", 1, math.min(#lines, 3)))
+		w.mine:SetText(("|cffffffffYour bets|r  %d, %s staked\n%s"):format(count, ns.CoinString(staked), table.concat(lines, "\n")))
 	else
-		w.mine:SetText(canBet and "|cff999999You haven't bet on this round.|r" or "")
+		w.mine:SetText(canBet and "|cff999999You haven't bet yet.|r" or "")
 	end
 
 	-- Builder

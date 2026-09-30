@@ -53,7 +53,7 @@ ns.AddCommand("watch", "- toggle logging buffs you gain and lose (walk up to a f
 end)
 
 -- Are PlaySoundFile / PlayMusic allowed? (Jukebox and band phases depend on it.)
-ns.AddCommand("sound", "[fileID] - play a sound file, or a ready-check sound with no ID", function(arg)
+ns.AddHiddenCommand("sound", "[fileID] - play a sound file, or a ready-check sound with no ID", function(arg)
 	local id = tonumber(arg)
 	if not id then
 		Bonfire:Printf("PlaySound(READY_CHECK): %s", tostring(select(2, pcall(PlaySound, SOUNDKIT.READY_CHECK))))
@@ -63,7 +63,7 @@ ns.AddCommand("sound", "[fileID] - play a sound file, or a ready-check sound wit
 	Bonfire:Printf("PlaySoundFile(%d): ok=%s willPlay=%s handle=%s", id, tostring(ok), tostring(willPlay), tostring(handle))
 end)
 
-ns.AddCommand("music", "<fileID>|stop - play or stop a music file", function(arg)
+ns.AddHiddenCommand("music", "<fileID>|stop - play or stop a music file", function(arg)
 	if arg == "stop" then
 		StopMusic()
 		return Bonfire:Print("music stopped")
@@ -95,7 +95,9 @@ ns.AddCommand("status", "- channel, position and roll-parser check", function()
 	end
 	Bonfire:Printf("fires heard: %d", count)
 	local kit, kitName = ns.FindCampfireKit()
-	Bonfire:Printf("at a campfire: %s   campfire kit: %s", ns.AtCampfire() and "yes" or "no", kit and (kitName .. " in bags") or "none found")
+	local buff, yards = ns.CampfireBuff(), ns.Table:PlacedDistance()
+	Bonfire:Printf("at a campfire: %s   campfire buff: %s   your fire: %s   campfire kit: %s", ns.AtCampfire() and "yes" or "no",
+		buff or "none", yards and ("%d yd away"):format(yards) or "not placed", kit and (kitName .. " in bags") or "none found")
 	local d = ns.Table:DistanceToFire()
 	if d then Bonfire:Printf("distance to your table's fire: %d yd (fold past %d)", d, ns.Table.FOLD_RANGE) end
 	local who, roll = ns.ParseRoll(RANDOM_ROLL_RESULT:format(UnitName("player"), 4, 1, 6))
@@ -126,6 +128,7 @@ ns.AddCommand("api", "- check the game APIs Bonfire uses exist in this client", 
 		"MoneyInputFrame_SetCopper", "TradePlayerInputMoneyFrame",
 		"StartDuel", "AcceptDuel", "CancelDuel", "DUEL_WINNER_KNOCKOUT", "DUEL_WINNER_RETREAT",
 		"FCF_OpenNewWindow", "GetChatWindowInfo", "ChatFrame_AddChannel", "LeaveChannelByName",
+		"DoEmote", "SendChatMessage",
 	}
 	local missing = {}
 	for _, path in ipairs(needed) do
@@ -179,4 +182,11 @@ ns.AddCommand("ping", "- find other Bonfire users on the channel", function()
 		end
 		if n == 0 then Bonfire:Print("  nobody answered. Same faction and layer? Do they have Bonfire and a joined channel (/bf status)?") end
 	end)
+end)
+
+-- What the game calls your character, so race and class lines can be matched to it.
+ns.AddCommand("whoami", "- your race and class as the game reports them", function()
+	local race, raceFile = UnitRace("player")
+	local class, classFile = UnitClass("player")
+	Bonfire:Printf("race: %s (%s)   class: %s (%s)", tostring(race), tostring(raceFile), tostring(class), tostring(classFile))
 end)

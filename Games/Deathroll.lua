@@ -7,14 +7,15 @@ local _, ns = ...
 --  extreme re-roll among just the tied players. This repeats until two remain.
 --
 --  The duel: the last two take turns. The first rolls 1..start, each next roll is
---  1..(the roll before). Whoever rolls a 1 loses the pot.
+--  1..(the roll before). Whoever rolls a 1 loses the pot. A classic 1v1 starts at 100;
+--  the final roll-off of an all-out game (3 or more players) starts at 10.
 --
 -- Anyone who doesn't roll in time is folded by the host (Deathroll.Fold): out
 -- immediately, and in the duel that hands the win to the other player.
 --
 -- Pure rules, no WoW API, so tests/run.lua can load it. The host feeds in real /roll
 -- results and does the timing.
-local Deathroll = { name = "Deathroll", sides = 100, rollSeconds = 8 }
+local Deathroll = { name = "Deathroll", sides = 100, finalStart = 10, rollSeconds = 8 }
 ns.Games = ns.Games or {}
 ns.Games.deathroll = Deathroll
 
@@ -49,9 +50,14 @@ local function Begin(s)
 	local alive = Deathroll.Alive(s)
 	if #alive <= 1 then return Finish(s, alive[1]) end
 	if #alive == 2 then
+		-- Whoever rolled higher in the last all-out round rolls first; a tie (or a classic 1v1,
+		-- where nobody has rolled) goes by seat order.
+		local rolls = (s.pool and s.pool.rolls) or s.rolls or {}
+		local first, second = alive[1], alive[2]
+		if (rolls[second] or 0) > (rolls[first] or 0) then first, second = second, first end
 		s.phase = "duel"
-		s.duel = { roller = alive[1], other = alive[2], max = s.start }
-		s.waiting = { [alive[1]] = true }
+		s.duel = { roller = first, other = second, max = s.duelStart or s.start }
+		s.waiting = { [first] = true }
 		return
 	end
 	s.phase, s.rolls, s.waiting, s.pool, s.tie = "round", {}, Set(alive), nil, nil
@@ -160,6 +166,7 @@ function Deathroll.New(players, start)
 		s.order[i] = name
 		s.alive[name] = true
 	end
+	if #players >= 3 then s.duelStart = math.min(Deathroll.finalStart, s.start) end
 	Begin(s)
 	return s
 end

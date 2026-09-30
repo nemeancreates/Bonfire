@@ -21,9 +21,11 @@ read_globals = {
 	"RandomRoll", "StopMusic", "UnitGUID", "UnitName", "issecretvalue",
 	-- FrameXML globals and constants
 	"C_TradeInfo", "MoneyInputFrame_SetCopper", "TradePlayerInputMoneyFrame",
-	"DEFAULT_CHAT_FRAME", "geterrorhandler", "FCF_OpenNewWindow", "FCF_StartAlertFlash", "GetChatWindowInfo", "ChatFrame_AddChannel",
+	"DEFAULT_CHAT_FRAME", "UnitRace", "UnitClass", "DoEmote", "SendChatMessage", "geterrorhandler", "FCF_OpenNewWindow", "FCF_StartAlertFlash", "GetChatWindowInfo", "ChatFrame_AddChannel",
 	"LeaveChannelByName", "SELECTED_CHAT_FRAME",
 	"ERR_TRADE_COMPLETE", "NUM_BAG_SLOTS", "NUM_CHAT_WINDOWS", "RANDOM_ROLL_RESULT", "SOUNDKIT", "UIParent", "UISpecialFrames",
 	"floor", "strtrim", "tContains", "tinsert",
 }
 files["tests/"] = { read_globals = { "os" } }
+-- The table simulation fakes the game's own functions, so it has to set them.
+files["tests/table_sim.lua"] = { ignore = { "121" } }

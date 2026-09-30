@@ -26,6 +26,7 @@ local defaults = {
 		-- unit indexes ns.COIN_UNITS; total is the bet being built up, confirmed is what the table plays for
 		stake = { forFun = true, amount = 5, unit = 2, total = 0, confirmed = 0 },
 		pins = true,
+		game = "embers",                            -- the game your next table plays
 		chatTab = true,                             -- Bonfire's own chat tab, and table chat
 		bet = { amount = 5, unit = 2, total = 0 },  -- the side bet being built
 		betCut = 5,                                  -- host cut for new betting cards, percent
@@ -68,18 +69,38 @@ function ns.SignedCoins(copper)
 	return ("%s%s|r"):format(copper > 0 and "|cff66ff66+" or "|cffff6666-", ns.CoinString(math.abs(copper)))
 end
 
+-- The game the picker has selected, falling back to Embers if it isn't playable.
+function ns.ChosenGame()
+	local key = Bonfire.db.global.game
+	return ns.GameReady(key) and key or "embers"
+end
+
 -- "Welcoming Campfire": the buff you get from resting at a Forever campfire
 -- (spell ID from DynamicCam's Forever camping situation; verify with /bf auras).
 ns.CAMP_AURA = 1229739
 
--- True while the Welcoming Campfire buff is on you: proof a campfire is burning next to you.
+-- The name of the campfire buff on you, or nil: proof a campfire is burning next to you.
+-- Matches the Welcoming Campfire buff by ID, and any other buff with "campfire" in its name
+-- (a proximity buff such as "Campfire nearby" counts too).
 function ns.CampfireBuff()
 	local ok, aura = pcall(C_UnitAuras.GetPlayerAuraBySpellID, ns.CAMP_AURA)
-	return ok and aura ~= nil
+	if ok and aura then return aura.name or "Welcoming Campfire" end
+	local found
+	pcall(function()
+		for i = 1, 40 do
+			local a = C_UnitAuras.GetAuraDataByIndex("player", i, "HELPFUL")
+			if not a then break end
+			if type(a.name) == "string" and a.name:lower():find("campfire", 1, true) then
+				found = a.name
+				break
+			end
+		end
+	end)
+	return found
 end
 
 function ns.AtCampfire()
-	return ns.CampfireBuff() or ns.Table:NearOwnFire()
+	return ns.CampfireBuff() ~= nil or ns.Table:NearOwnFire()
 end
 
 -- The Basic Campfire Kit's exact name isn't confirmed, so match on "campfire".
@@ -92,6 +113,19 @@ function ns.FindCampfireKit()
 			if name and name:lower():find("campfire", 1, true) then return bag .. " " .. slot, name end
 		end
 	end
+end
+
+-- How many campfire kits are in your bags. Placing a fire uses one up; crafting makes one.
+function ns.CountCampfireKits()
+	local n = 0
+	for bag = 0, (NUM_BAG_SLOTS or 4) + 1 do
+		for slot = 1, C_Container.GetContainerNumSlots(bag) do
+			local info = C_Container.GetContainerItemInfo(bag, slot)
+			local name = info and C_Item.GetItemNameByID(info.itemID)
+			if name and name:lower():find("campfire", 1, true) then n = n + (info.stackCount or 1) end
+		end
+	end
+	return n
 end
 
 -- Marks gambling fires wherever seats are shown; for-fun fires get nothing.
@@ -116,9 +150,13 @@ end
 -- Slash commands ---------------------------------------------------------------
 local commands, order = {}, {}
 
-function ns.AddCommand(name, usage, fn)
+function ns.AddCommand(name, usage, fn, hidden)
 	commands[name] = { usage = usage, fn = fn }
-	order[#order + 1] = name
+	if not hidden then order[#order + 1] = name end  -- hidden commands work but aren't in the help list
+end
+
+function ns.AddHiddenCommand(name, usage, fn)
+	ns.AddCommand(name, usage, fn, true)
 end
 
 function Bonfire:OnSlash(input)
@@ -155,6 +193,7 @@ function Bonfire:OnEnable()
 	ns.UI:Enable()
 	ns.Range:Enable()
 	ns.Chat:Enable()
+	ns.Quips:Enable()
 	local _, build, _, interface = GetBuildInfo()
 	self:Printf("v%s loaded (client %s, interface %d). /bf to open.",
 		C_AddOns.GetAddOnMetadata(ADDON, "Version"), build, interface)

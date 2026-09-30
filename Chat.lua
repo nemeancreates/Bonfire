@@ -74,5 +74,5 @@ ns.AddCommand("chat", "- Bonfire's own chat tab and table chat, on or off", func
 	local db = Bonfire.db.global
 	db.chatTab = not db.chatTab
 	if db.chatTab then Chat:EnsureTab() else Chat.frame = nil end
-	Bonfire:Print("Bonfire messages and table chat are " .. (db.chatTab and "on: look for the Bonfire tab." or "off: back in your main chat."))
+	Bonfire:Print("Bonfire's chat tab, table chat and random quips are " .. (db.chatTab and "on: look for the Bonfire tab." or "off: messages are back in your main chat."))
 end)

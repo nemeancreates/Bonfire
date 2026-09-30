@@ -1,10 +1,14 @@
 -- Offline tests for pure game logic. Run scripts\test.ps1 (LuaJIT = Lua 5.1, like WoW).
 local ns = {}
+ns.AddCommand = function() end  -- commands are registered by the addon, not needed here
 local function load(file) assert(loadfile(file))("Bonfire", ns) end
 load("Roll.lua")
 load("Money.lua")
 load("Ledger.lua")
+load("History.lua")
 load("Bets.lua")
+load("Games/List.lua")
+load("Quips.lua")
 load("Games/Embers.lua")
 load("Games/Deathroll.lua")
 load("Games/OddManOut.lua")
@@ -240,6 +244,19 @@ test("five players: one out, then two, then the duel", function()
 	eq(s.phase, "duel"); eq(names(Deathroll.Alive(s)), "A,C")
 end)
 
+test("the final roll-off of an all-out game starts at 10, a classic 1v1 at 100", function()
+	local s = Deathroll.New({ "A", "B", "C" })
+	rolls(s, { { "A", 10 }, { "B", 90 }, { "C", 50 } })
+	eq(s.phase, "duel")
+	local _, hi = Deathroll.Range(s, s.duel.roller)
+	eq(hi, 10)
+	eq(Deathroll.Roll(s, s.duel.roller, 11), false)
+	local first = s.duel.roller
+	eq(Deathroll.Roll(s, first, 7), true)
+	eq(select(2, Deathroll.Range(s, s.duel.roller)), 7)
+	eq(select(2, Deathroll.Range(Deathroll.New({ "A", "B" }), "A")), 100)
+end)
+
 test("a tie for highest re-rolls among only the tied players", function()
 	local s = Deathroll.New({ "A", "B", "C", "D" })
 	rolls(s, { { "A", 90 }, { "B", 90 }, { "C", 50 }, { "D", 10 } })
@@ -317,6 +334,52 @@ test("a fold that leaves one player standing ends the game", function()
 	eq(s.over, false)
 	Deathroll.Fold(s, "B")
 	eq(s.over, true); eq(s.winner, "C")
+end)
+
+local function players(n)
+	local list = {}
+	for i = 1, n do list[i] = "P" .. i end
+	return list
+end
+
+test("Deathroll: at every size from 3 to 10, one player wins outright when the rest fold", function()
+	for n = 3, 10 do
+		local s = Deathroll.New(players(n))
+		local others = {}
+		for i = 2, n do others[#others + 1] = "P" .. i end
+		eq(Deathroll.FoldMany(s, others), true)
+		eq(s.over, true); eq(s.winner, "P1")
+
+		local t = Deathroll.New(players(n))
+		eq(Deathroll.Roll(t, "P1", 50), true)
+		for i = 2, n - 1 do Deathroll.Fold(t, "P" .. i) end
+		eq(t.over, false)
+		Deathroll.Fold(t, "P" .. n)
+		eq(t.over, true); eq(t.winner, "P1")
+	end
+end)
+
+test("the higher roller of the last all-out round rolls first in the roll-off", function()
+	local s = Deathroll.New({ "A", "B", "C" })
+	rolls(s, { { "A", 10 }, { "B", 90 }, { "C", 50 } })
+	eq(s.duel.roller, "C"); eq(s.duel.other, "A")
+	local t = Deathroll.New({ "A", "B", "C", "D" })
+	rolls(t, { { "A", 50 }, { "B", 90 }, { "C", 50 }, { "D", 10 } })
+	eq(t.duel.roller, "A")
+	eq(Deathroll.New({ "A", "B" }).duel.roller, "A")
+end)
+
+test("Odd Man Out: at every size from 3 to 10, one player can win in the first round", function()
+	local Odd = ns.Games.oddmanout
+	for n = 3, 10 do
+		local s = Odd.New(players(n))
+		for i = 1, n - 1 do Odd.Pick(s, "P" .. i, 5) end
+		Odd.Pick(s, "P" .. n, 7)
+		for i = 1, n - 1 do Odd.Roll(s, "P" .. i, 1) end
+		Odd.Roll(s, "P" .. n, 5)
+		eq(s.over, true); eq(s.winner, "P" .. n); eq(#s.outOrder, n - 1)
+		eq(names(Odd.Winners(s)), "P" .. n)
+	end
 end)
 
 test("everyone folding together leaves no winner", function()
@@ -599,6 +662,91 @@ test("bad bets are refused", function()
 	eq(Bets.Place(t, "A", 1, 1, ns.BET_CAP + 1), false)
 end)
 
+-- History --------------------------------------------------------------------
+test("history counts wins, losses, gold, streaks and keeps the last ten", function()
+	local h = ns.History.New()
+	ns.History.Add(h, "embers", true, 5000, 1)
+	ns.History.Add(h, "embers", true, 3000, 2)
+	ns.History.Add(h, "oddmanout", true, 0, 3)
+	eq(h.played, 3); eq(h.won, 3); eq(h.gained, 8000); eq(h.streak, 3); eq(h.bestWin, 3)
+	ns.History.Add(h, "embers", false, -2000, 4)
+	eq(h.lost, 1); eq(h.spent, 2000); eq(h.streak, -1); eq(h.bestWin, 3); eq(h.bestLoss, 1)
+	ns.History.Add(h, "embers", false, -2000, 5)
+	eq(h.streak, -2); eq(h.bestLoss, 2)
+	ns.History.Add(h, "embers", true, 100, 6)
+	eq(h.streak, 1); eq(h.bestLoss, 2)
+	eq(h.recent[1].at, 6); eq(h.recent[1].won, true)
+	for i = 7, 20 do ns.History.Add(h, "embers", true, 0, i) end
+	eq(#h.recent, 10); eq(h.recent[1].at, 20); eq(h.recent[10].at, 11)
+end)
+
+test("side bets tally on their own, once per settled round, and older saves still load", function()
+	local h = ns.History.New()
+	eq(h.bets, nil)
+	eq(ns.History.AddBet(h, "Host|Duel|100", "Duel", true, 4000, 1), true)
+	eq(ns.History.AddBet(h, "Host|Duel|100", "Duel", true, 4000, 2), false)  -- same round again
+	eq(ns.History.AddBet(h, "Host|Race|200", "Race", false, -1500, 3), true)
+	eq(h.bets.placed, 2); eq(h.bets.won, 1); eq(h.bets.lost, 1)
+	eq(h.bets.gained, 4000); eq(h.bets.spent, 1500)
+	eq(h.bets.recent[1].label, "Race"); eq(h.bets.recent[2].net, 4000)
+	eq(h.played, 0)  -- the games record is untouched
+	for i = 1, 60 do ns.History.AddBet(h, "k" .. i, "x", true, 0, i) end
+	eq(#h.bets.recent, 10); eq(#h.bets.seen, ns.History.KEEP_SEEN)
+	eq(ns.History.AddBet(h, "k60", "x", true, 0, 99), false)  -- recent keys are still remembered
+end)
+
+-- Quips ----------------------------------------------------------------------
+local Quips = ns.Quips
+
+test("every kind of quip has lines and only real-looking emotes", function()
+	for _, kind in ipairs({ "start", "win", "lose", "streak_win", "streak_lose", "roll_high", "roll_low", "bust", "cashout", "ambient" }) do
+		eq(#Quips.lines[kind] >= 3, true)
+	end
+	for kind, list in pairs(Quips.emotes) do
+		eq(Quips.lines[kind] ~= nil, true)
+		for _, token in ipairs(list) do eq(token, token:upper()) end
+	end
+end)
+
+test("picking a line skips recent ones when it can", function()
+	local recent = {}
+	for i = 1, #Quips.lines.win - 1 do recent[Quips.lines.win[i]] = true end
+	for _ = 1, 20 do
+		eq(Quips.Pick("win", function(lo, hi) return math.random(lo, hi) end, recent), Quips.lines.win[#Quips.lines.win])
+	end
+	for _, line in ipairs(Quips.lines.win) do recent[line] = true end
+	eq(type(Quips.Pick("win", function(lo) return lo end, recent)), "string")
+	eq(Quips.Pick("nonsense", math.random), nil)
+end)
+
+test("streaks start at three in a row", function()
+	eq(Quips.StreakKind(2), nil); eq(Quips.StreakKind(3), "streak_win"); eq(Quips.StreakKind(7), "streak_win")
+	eq(Quips.StreakKind(-2), nil); eq(Quips.StreakKind(-3), "streak_lose"); eq(Quips.StreakKind(nil), nil)
+end)
+
+test("a roll is high in the top fifth of the die and low in the bottom fifth", function()
+	eq(Quips.RollKind(20, 20), "roll_high"); eq(Quips.RollKind(17, 20), "roll_high"); eq(Quips.RollKind(16, 20), nil)
+	eq(Quips.RollKind(1, 20), "roll_low"); eq(Quips.RollKind(4, 20), "roll_low"); eq(Quips.RollKind(5, 20), nil)
+	eq(Quips.RollKind(6, 6), "roll_high"); eq(Quips.RollKind(3, 6), nil); eq(Quips.RollKind(1, 1), nil)
+end)
+
+-- Game list ------------------------------------------------------------------
+test("the picker lists each game once, and the playable ones have rules", function()
+	local seen, ready = {}, 0
+	for _, entry in ipairs(ns.GAME_LIST) do
+		eq(seen[entry.key], nil)
+		seen[entry.key] = true
+		if entry.ready then
+			ready = ready + 1
+			eq(type(ns.Games[entry.key]), "table"); eq(type(ns.Games[entry.key].New), "function")
+		end
+	end
+	eq(ready >= 2, true)
+	eq(ns.GameReady("embers"), true); eq(ns.GameReady("oddmanout"), true)
+	eq(ns.GameReady("critters"), false); eq(ns.GameReady("nonsense"), false)
+	eq(ns.GameName("oddmanout"), "The Odd Man Out"); eq(ns.GameName("critters"), "Critter Race")
+end)
+
 -- The Odd Man Out ------------------------------------------------------------
 local Odd = ns.Games.oddmanout
 
@@ -652,6 +800,75 @@ test("players can share a number: only the others are hit by a roll of it", func
 	picked(t, { { "A", 5 }, { "B", 5 }, { "C", 3 } })
 	oddRolls(t, { { "A", 5 }, { "B", 5 }, { "C", 2 } })
 	eq(t.over, true); eq(t.winner, "C")
+end)
+
+test("a quiet round widens the net: a near miss counts", function()
+	local s = Odd.New({ "A", "B" })
+	picked(s, { { "A", 3 }, { "B", 8 } })
+	oddRolls(s, { { "A", 1 }, { "B", 10 } })
+	eq(#s.last.knocked, 0); eq(s.reach, 1)
+	oddRolls(s, { { "A", 7 }, { "B", 10 } })
+	eq(s.last.reach, 1); eq(s.out.B.reason, "knocked out"); eq(s.winner, "A")
+end)
+
+test("near misses wrap around: 10 is next to 1", function()
+	local s = Odd.New({ "A", "B" })
+	picked(s, { { "A", 1 }, { "B", 5 } })
+	oddRolls(s, { { "A", 2 }, { "B", 7 } })
+	eq(s.reach, 1)
+	oddRolls(s, { { "A", 8 }, { "B", 10 } })
+	eq(s.out.A.reason, "knocked out"); eq(s.winner, "B")
+end)
+
+test("reach grows each quiet round up to a cap", function()
+	eq(Odd.MaxReach(10), 2); eq(Odd.MaxReach(20), 4)
+	local s = Odd.New({ "A", "B" })
+	picked(s, { { "A", 1 }, { "B", 6 } })
+	local seen = {}
+	for _ = 1, 4 do
+		seen[#seen + 1] = s.reach
+		oddRolls(s, { { "A", 2 }, { "B", 5 } })
+	end
+	eq(table.concat(seen, ","), "0,1,2,2")
+	eq(s.reach, 2)
+end)
+
+test("reach resets when someone is knocked out", function()
+	local s = Odd.New({ "A", "B", "C" })
+	picked(s, { { "A", 1 }, { "B", 5 }, { "C", 9 } })
+	oddRolls(s, { { "A", 3 }, { "B", 7 }, { "C", 7 } })
+	oddRolls(s, { { "A", 3 }, { "B", 7 }, { "C", 7 } })
+	eq(s.reach, 2)
+	oddRolls(s, { { "A", 3 }, { "B", 5 }, { "C", 5 } })
+	eq(names(Odd.Alive(s)), "A,C"); eq(s.out.B.reason, "knocked out"); eq(s.reach, 0)
+end)
+
+test("a wipeout backs the reach off a step and replays", function()
+	local s = Odd.New({ "A", "B" })
+	picked(s, { { "A", 3 }, { "B", 8 } })
+	oddRolls(s, { { "A", 1 }, { "B", 10 } })
+	oddRolls(s, { { "A", 1 }, { "B", 10 } })
+	eq(s.reach, 2)
+	oddRolls(s, { { "A", 6 }, { "B", 4 } })
+	eq(s.last.wipeout, true); eq(s.reach, 1); eq(names(Odd.Alive(s)), "A,B")
+end)
+
+test("a shrinking die resets the reach along with the picks", function()
+	local list = {}
+	for i = 1, 7 do list[i] = "P" .. i end
+	local s = Odd.New(list)
+	for i = 1, 7 do Odd.Pick(s, "P" .. i, i * 2) end
+	local function round(picks)
+		for i = 1, 7 do
+			local name = "P" .. i
+			if s.waiting[name] then Odd.Roll(s, name, picks[name] or 19) end
+		end
+	end
+	round({})
+	eq(s.reach, 1); eq(s.range, 20)
+	round({ P1 = 5, P5 = 9 })
+	eq(names(Odd.Alive(s)), "P1,P5,P6,P7")
+	eq(s.range, 10); eq(s.phase, "pick"); eq(s.reach, 0); eq(next(s.picks), nil)
 end)
 
 test("a round that would knock everyone out is replayed", function()

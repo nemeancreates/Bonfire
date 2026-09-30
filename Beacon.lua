@@ -10,12 +10,19 @@ ns.Beacon = Beacon
 
 local EXPIRE = 95          -- seconds without a beacon before a fire drops off
 local ANNOUNCE_EVERY = 30
+local NEARBY = 60          -- yards: close enough to say a fire is nearby
 local ICON = "Interface\\Icons\\Spell_Fire_Fire"
 
 local function PinTooltip(pin)
 	local fire = pin.fire
 	GameTooltip:SetOwner(pin, "ANCHOR_RIGHT")
 	GameTooltip:AddLine("Bonfire: " .. ns.Short(fire.host))
+	if fire.state == "camp" then
+		GameTooltip:AddLine("A campfire, no table yet", 1, 1, 1)
+		GameTooltip:AddLine("Rest nearby for the campfire buff, or ask them to open a table.", 0.6, 0.8, 1, true)
+		GameTooltip:Show()
+		return
+	end
 	local game = ns.Games[fire.game]
 	GameTooltip:AddLine(("%s  %d/%d seats %s"):format(game and game.name or "?", fire.seats or 0, fire.maxSeats or 0, ns.StakeBadge(fire.stake)), 1, 1, 1)
 	GameTooltip:AddLine((fire.stake or 0) > 0 and ("Stake " .. ns.Coins(fire.stake)) or "For fun, no gold involved", 1, 1, 1)
@@ -60,11 +67,24 @@ function Beacon:Announce()
 	}, "BULK")
 end
 
+-- A campfire you placed with no table at it is still worth showing on everyone's map.
+function Beacon:AnnounceFire()
+	local f = ns.Table.placed
+	if ns.Table.current or not f then return end
+	local ends = f.at + ns.Table.FIRE_LIFETIME
+	if GetServerTime() >= ends then return end
+	self.lastAnnounce = GetTime()
+	ns.Comm:Broadcast("B", {
+		m = f.map, x = floor(f.x * 10000), y = floor(f.y * 10000),
+		s = 0, n = 0, st = "camp", a = 0, e = ends,
+	}, "BULK")
+end
+
 function Beacon:OnQuery()
 	-- Spread replies out so a query doesn't trigger a burst from every host at once.
-	if ns.Table.current and ns.Table.current.host == ns.Me() then
-		C_Timer.After(math.random() * 4, function() self:Announce() end)
-	end
+	C_Timer.After(math.random() * 4, function()
+		if ns.Table.current then self:Announce() else self:AnnounceFire() end
+	end)
 end
 
 function Beacon:OnBeacon(d, sender)
@@ -73,7 +93,7 @@ function Beacon:OnBeacon(d, sender)
 	local fire = self.fires[sender] or { host = sender }
 	fire.mapID, fire.x, fire.y = d.m, d.x / 10000, d.y / 10000
 	fire.game, fire.seats, fire.maxSeats, fire.state, fire.stake = d.g, d.s, d.n, d.st, tonumber(d.a) or 0
-	fire.seen = GetTime()
+	fire.seen, fire.ends = GetTime(), d.e
 	self.fires[sender] = fire
 	self:Pin(fire)
 	ns.UI:Refresh()
@@ -110,10 +130,23 @@ end
 function Beacon:Tick()
 	local now = GetTime()
 	for host, fire in pairs(self.fires) do
-		if now - fire.seen > EXPIRE then self:Remove(host) end
+		if now - fire.seen > EXPIRE or (fire.ends and GetServerTime() > fire.ends) then self:Remove(host) end
 	end
-	if ns.Table.current and ns.Table.current.host == ns.Me() and now - (self.lastAnnounce or 0) >= ANNOUNCE_EVERY then
-		self:Announce()
+	if now - (self.lastAnnounce or 0) >= ANNOUNCE_EVERY then
+		if not ns.Table.current then
+			self:AnnounceFire()
+		elseif ns.Table.current.host == ns.Me() then
+			self:Announce()
+		end
+	end
+	-- Tell you when you come near a fire, once per visit (it resets once you're well away).
+	if not ns.Table.current then
+		for host, fire in pairs(self.fires) do
+			local d = self:Distance(fire)
+			local near = d ~= nil and d <= NEARBY
+			if near and not fire.alerted then Bonfire:Printf("%s's fire is nearby.", ns.Short(host)) end
+			fire.alerted = near or (fire.alerted and d ~= nil and d <= NEARBY + 40)
+		end
 	end
 	ns.UI:Refresh()  -- distances drift as you walk
 end

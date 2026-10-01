@@ -8,8 +8,9 @@ local Ledger = ns.Ledger
 -- an optional host cut. A round nobody bet against, or where nobody backed the winner,
 -- refunds every stake.
 --
--- Works on the table's `market`: { rounds, bets, cut (percent), current }.
---   round = { title, sides = { names }, state = "open"|"locked"|"done"|"void", winner, lockAt }
+-- Works on the table's `market`: { rounds, bets, cut (percent, the default for new rounds), current }.
+--   round = { title, sides = { names }, state = "open"|"locked"|"done"|"void", winner, lockAt,
+--             cut (percent: chosen when the round opens and fixed for it, so the odds never move under a bettor) }
 --   bet   = { id, who, round, side, amount (copper), paid }
 --
 -- Pure (no WoW API) so tests/run.lua can load it. Money moves through Ledger balances;
@@ -48,11 +49,11 @@ end
 -- Returns the new round's number and whether it started a fresh card, or nil when the card
 -- is full and still has rounds going. A fresh card drops only finished rounds: their bets
 -- are already paid out or refunded.
-function Bets.AddRound(m, title, sides, lockAt, game)
+function Bets.AddRound(m, title, sides, lockAt, game, cut)
 	if not Bets.CanAddRound(m) then return nil end
 	local fresh = #m.rounds >= Bets.MAX_ROUNDS
 	if fresh then m.rounds, m.bets, m.current = {}, {}, 1 end
-	m.rounds[#m.rounds + 1] = { title = title, sides = sides, state = "open", lockAt = lockAt, game = game or "Custom" }
+	m.rounds[#m.rounds + 1] = { title = title, sides = sides, state = "open", lockAt = lockAt, game = game or "Custom", cut = cut or m.cut or 0 }
 	return #m.rounds, fresh
 end
 
@@ -70,14 +71,16 @@ function Bets.Pools(m, ri)
 	return pools, total
 end
 
-local function Net(m, total)
-	return total - math.floor(total * (m.cut or 0) / 100)
+-- What's left of a round's pot after the host's cut (the round's own, else the card's default).
+local function Net(m, ri, total)
+	local r = m.rounds[ri]
+	return total - math.floor(total * ((r and r.cut) or m.cut or 0) / 100)
 end
 
 -- Payout multiplier per side (nil where nothing is bet on that side).
 function Bets.Odds(m, ri)
 	local pools, total = Bets.Pools(m, ri)
-	local net, odds = Net(m, total), {}
+	local net, odds = Net(m, ri, total), {}
 	for i, pool in ipairs(pools) do
 		if pool > 0 then odds[i] = net / pool end
 	end
@@ -89,7 +92,7 @@ function Bets.Preview(m, ri, side, amount)
 	if amount <= 0 then return 0 end
 	local pools, total = Bets.Pools(m, ri)
 	if total - pools[side] == 0 then return amount end  -- nothing against it yet: stake back
-	return math.floor(Net(m, total + amount) * amount / (pools[side] + amount))
+	return math.floor(Net(m, ri, total + amount) * amount / (pools[side] + amount))
 end
 
 -- What each paid bet gets back if winner wins: bet id -> copper. Also whether it's a
@@ -105,7 +108,7 @@ function Bets.Payouts(m, ri, winner)
 		end
 		return pay, true, 0
 	end
-	local net = Net(m, total)
+	local net = Net(m, ri, total)
 	for _, b in ipairs(m.bets) do
 		if b.round == ri and b.paid and b.side == winner then
 			pay[b.id] = math.floor(net * b.amount / backed)

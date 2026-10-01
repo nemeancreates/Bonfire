@@ -447,6 +447,23 @@ test("rounds carry their game mode and the cut choices are fixed", function()
 	eq(table.concat(Bets.CUTS, ","), "2,5,10,20")
 end)
 
+test("each round keeps the cut it opened with, whatever the card's default becomes", function()
+	local t = Market(5, { A = 1000, B = 1000 })
+	eq(t.market.rounds[1].cut, 5)  -- no cut named: the card's default
+	local ri = Bets.AddRound(t.market, "Rats", { "X", "Y" }, 0, "Dice", 20)
+	eq(t.market.rounds[ri].cut, 20)
+	t.market.cut = 2  -- a later round's cut becomes the default; the open ones don't move
+	eq(t.market.rounds[1].cut, 5); eq(t.market.rounds[ri].cut, 20)
+	Bets.Place(t, "A", ri, 1, 100); Bets.Place(t, "B", ri, 2, 100)
+	local pay, _, cut = Bets.Payouts(t.market, ri, 1)
+	eq(cut, 40); eq(pay[1], 160)  -- 200 pool, 20% to the host
+	eq(Bets.Odds(t.market, ri)[1], 1.6)
+	eq(Bets.Preview(t.market, ri, 1, 100), 120)  -- another 100 on side 1: pool 300, 240 after the cut, half of it
+	Bets.Place(t, "A", 1, 1, 100); Bets.Place(t, "B", 1, 2, 100)
+	local _, _, cut1 = Bets.Payouts(t.market, 1, 1)
+	eq(cut1, 10)  -- round 1 still takes its own 5%
+end)
+
 test("a card holds six rounds; a full card that's all settled starts over", function()
 	local t = Market(0, { A = 1000 })
 	for i = 3, Bets.MAX_ROUNDS do eq(Bets.AddRound(t.market, "R" .. i, { "X", "Y" }), i) end
@@ -716,7 +733,7 @@ end)
 local Quips = ns.Quips
 
 test("every kind of quip has lines and only real-looking emotes", function()
-	for _, kind in ipairs({ "start", "win", "lose", "streak_win", "streak_lose", "roll_high", "roll_low", "bust", "cashout", "ambient" }) do
+	for _, kind in ipairs({ "start", "win", "lose", "streak_win", "streak_lose", "roll_high", "roll_low", "bust", "cashout", "ambient", "begun" }) do
 		eq(#Quips.lines[kind] >= 3, true)
 	end
 	for kind, list in pairs(Quips.emotes) do

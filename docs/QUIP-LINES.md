@@ -16,8 +16,9 @@ The game only lets an addon speak for you during one of your own clicks in Bonfi
 | Start | 40% when the host presses Start | host |
 | Win / Lose | 60% at the end of a game you played | anyone |
 | Win streak / Lose streak | always, at 3+ in a row | anyone |
-| High roll (5-6) / Low roll (2) | 10%, Embers only | the host (the one rolling) |
-| Fire goes out (a 1) | 35%, Embers only | the host |
+| Game begun | always, on the host's first roll of a game | host |
+| High roll (5-6) / Low roll (2) | 10%, Bonfire game only | the host (the one rolling) |
+| Fire goes out (a 1) | 35%, Bonfire game only | the host |
 | Cashing out | 60% on Cash out | players |
 | Any other click | 8% | anyone |
 
@@ -29,6 +30,12 @@ The game only lets an addon speak for you during one of your own clicks in Bonfi
 - May the dice be kind.
 - Everyone ready? Here we go.
 - Stoke the flames!
+
+**Game begun** (always said on the host's first roll of a game)
+- And we're off!
+- The game is on!
+- Dice in the air!
+- First roll, here we go!
 
 **Win**
 - That's how it's done!
@@ -60,19 +67,19 @@ The game only lets an addon speak for you during one of your own clicks in Bonfi
 - Somebody check the dice.
 - Emotes: cry, sigh, facepalm
 
-**High roll** (Embers 5 or 6)
+**High roll** (Bonfire game, 5 or 6)
 - Now THAT'S a roll!
 - Feeling lucky!
 - Big number, big smile.
 - Emote: cheer
 
-**Low roll** (Embers 2)
+**Low roll** (Bonfire game, 2)
 - Oof, small one.
 - The dice hate me.
 - Could've been worse. Maybe.
 - Emote: sigh
 
-**Embers fire goes out (a rolled 1)**
+**Fire goes out (a rolled 1 in the Bonfire game)**
 - It sizzled out!
 - Not the fire!
 - And there goes the pot.

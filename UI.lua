@@ -296,8 +296,13 @@ local function Build()
 	buttons.history:SetPoint("BOTTOMRIGHT", -12, 10)
 	Tooltip(buttons.history, "Your games, side bets and gold at Bonfire tables. Kept per character.")
 	Tooltip(buttons.here, function()
-		if ns.AtCampfire() then return "Open a table at the campfire you're standing at." end
-		return "Hosting unlocks at your own campfire, or at anyone else's once you've rested there about a minute and have the Welcoming Campfire buff. You can also light one with a Basic Campfire Kit. /bf host skips this check."
+		local ok, why, unverified = ns.HostCheck()
+		if why then return why end
+		if ok and unverified then
+			return "Open a table here. Bonfire can't see where this campfire is (nobody running Bonfire lit it), so stand right next to it: players join within 35 yd of where you start."
+		end
+		if ok then return "Open a table at this campfire." end
+		return "Hosting unlocks within 35 yd of a campfire: one you lit, one another Bonfire user lit, or any fire once you have the Welcoming Campfire buff. You can also light one with a Basic Campfire Kit. /bf host skips this check."
 	end)
 	Tooltip(buttons.light, "Uses your Basic Campfire Kit. Your table opens as soon as the fire is lit.")
 	Tooltip(buttons.stoke, function()
@@ -396,9 +401,14 @@ local function Build()
 		self.at = GetTime()
 		self:SetAlpha(0.4)
 		C_Timer.After(15, function() self:SetAlpha(1) end)
-		ns.Ping()
+		UI.ping = { text = "looking around...", at = GetTime() }
+		ns.Ping(nil, function(heard)
+			UI.ping = { text = heard > 0 and ("%d Bonfire user%s answered"):format(heard, heard == 1 and "" or "s") or "nobody answered", at = GetTime() }
+			UI:Refresh()
+			C_Timer.After(15.1, function() UI:Refresh() end)  -- and it fades
+		end)
 		if GetTime() - (ns.Beacon.lastHello or 0) > 5 then ns.Beacon:Hello() end
-		UI:Notice("Looking for Bonfire users nearby...")
+		UI:Refresh()
 	end)
 	Tooltip(UI.pingButton, "Look for Bonfire users and fires nearby. Anyone who can hear you answers: hosts show up in the fire list, players in a host's invite list, and chat says who answered.")
 
@@ -452,6 +462,12 @@ local function Use(w)
 	used[w] = true
 	if not Locked(w) then w:Show() end
 end
+
+-- The tab or two-way button you're on stays pressed in (and its text gold, set by the caller).
+local function Pressed(b, on)
+	b:SetButtonState(on and "PUSHED" or "NORMAL", on and true or false)
+end
+UI.Pressed = Pressed
 
 local function HideUnused()
 	local marks = used
@@ -523,7 +539,8 @@ local function ShowHistory()
 		frame.money:SetText(lines[2] or "")
 		for i = 3, #lines do SetRow(i - 2, lines[i]) end
 	end
-	buttons.history:SetText("Back")
+	buttons.history:SetText("|cffffd100Back|r")
+	Pressed(buttons.history, true)
 	Use(buttons.history)
 end
 
@@ -580,12 +597,16 @@ local function ShowRating()
 end
 
 local function ShowFires()
-	frame.header:SetText("Nearby fires")
+	-- The spyglass's search shows up here, next to the heading, while it's fresh.
+	local ping = UI.ping and GetTime() - UI.ping.at < 15 and ("   |cff999999" .. UI.ping.text .. "|r") or ""
+	frame.header:SetText("Nearby fires" .. ping)
 	local list = ns.Beacon:List()
-	-- What the window can tell about a campfire near you: the buff, and how far the one you placed is.
+	-- What the window can tell about a campfire near you: whether you can host, the buff, and how
+	-- far the one you placed is.
+	local ok, why = ns.HostCheck()
 	local buff, yards = ns.CampfireBuff(), ns.Table:PlacedDistance()
-	local where = buff and ("You're at a campfire (" .. buff .. ").")
-		or (yards and ("Your campfire is about %d yd away."):format(yards)) or ""
+	local where = why or (buff and ("You're at a campfire (" .. buff .. ").")
+		or (yards and ("Your campfire is about %d yd away."):format(yards))) or ""
 	frame.sub:SetText(#list == 0 and ((where ~= "" and (where .. " ") or "") .. "No other fires in range.") or where)
 	local h = Bonfire.db.char.history
 	if h and h.played > 0 then
@@ -610,17 +631,19 @@ local function ShowFires()
 	RefreshStake()
 	Use(stake)
 	buttons.history:SetText("History")
+	Pressed(buttons.history, false)
 	Use(buttons.history)
 
-	-- At a campfire: host there. Otherwise light one with the kit, or explain what's missing.
-	local atFire, kit = ns.AtCampfire(), ns.FindCampfireKit()
-	if not atFire and kit and not InCombatLockdown() then
+	-- Within 35 yd of a fire: host there. A fire close by but too far: Host stays greyed and the
+	-- line above says how far. No fire around: light one with the kit, or explain what's missing.
+	local kit = ns.FindCampfireKit()
+	if not ok and not why and kit and not InCombatLockdown() then
 		buttons.light:SetParent(frame)  -- out of combat here; parked again when it's not shown
 		buttons.light:SetAttribute("item", kit)
 		LayoutLeft({ buttons.light })
 	else
-		buttons.here:SetText(atFire and "Host at this fire" or "Light a fire")
-		buttons.here:SetEnabled(atFire)
+		buttons.here:SetText((ok or why) and "Host at this fire" or "Light a fire")
+		buttons.here:SetEnabled(ok and true or false)
 		LayoutLeft({ buttons.here })
 	end
 end
@@ -982,8 +1005,11 @@ local function Draw()
 	if UI.view == "invite" and not UI.invite then UI.view = nil end
 	local inBets = UI.view == "bets"
 	-- The tab you're on shows in gold.
-	UI.tableButton:SetText(inBets and "Table" or "|cffffd100Table|r")
+	local onTable = t ~= nil and not inBets and UI.view ~= "settings" and UI.view ~= "history" and UI.view ~= "rate" and UI.view ~= "invite"
+	UI.tableButton:SetText(onTable and "|cffffd100Table|r" or "Table")
 	UI.betsButton:SetText(inBets and "|cffffd100Bets|r" or "Bets")
+	Pressed(UI.tableButton, onTable)
+	Pressed(UI.betsButton, inBets)
 	-- The game picker: on the main menu, and at your own table between games.
 	local pickable = not inBets and UI.view ~= "history" and UI.view ~= "rate" and UI.view ~= "invite" and UI.view ~= "settings"
 		and (not t or (ns.Table:IsHosting() and t.state == "open"))

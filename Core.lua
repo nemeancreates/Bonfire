@@ -128,6 +128,33 @@ function ns.AtCampfire()
 	return ns.CampfireBuff() ~= nil or ns.Table:NearOwnFire()
 end
 
+-- Yards to the nearest campfire whose place we know: the one we placed, or one another Bonfire
+-- user announced (a table or a bare campfire). nil when we know of none.
+function ns.NearestFire()
+	local best = ns.Table:PlacedDistance()
+	for _, fire in pairs(ns.Beacon.fires) do
+		local d = ns.Beacon:Distance(fire)
+		if d and (not best or d < best) then best = d end
+	end
+	return best
+end
+
+-- Whether you can host here, and why not. Campfires stand at least 100 yd apart and the campfire
+-- buff reaches about that far, so the buff alone doesn't mean you're at the fire. When we know
+-- where the fire is, hosting waits until you're within the table's 35 yd. A fire nobody running
+-- Bonfire placed can't be measured, so then the buff has to do (unverified = true).
+local KNOWN_FIRE = 120  -- yards: a fire we know this close is the one the buff is from
+function ns.HostCheck()
+	local range = ns.Table.FOLD_RANGE
+	local d = ns.NearestFire()
+	if d and d <= range then return true end
+	if d and d <= KNOWN_FIRE then
+		return false, ("The fire is %d yd away: walk within %d yd to host."):format(d, range)
+	end
+	if ns.CampfireBuff() then return true, nil, true end
+	return false
+end
+
 -- The Basic Campfire Kit's exact name isn't confirmed, so match on "campfire".
 -- Returns "bag slot", which a secure item button accepts, and the item's name.
 function ns.FindCampfireKit()

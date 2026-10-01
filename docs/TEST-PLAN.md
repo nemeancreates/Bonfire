@@ -23,7 +23,7 @@ Not grouped, standing together:
 
 Write down what each of you sees ungrouped and grouped. Every game where more than one player rolls depends on this.
 
-## 3. A full Embers game
+## 3. A full Bonfire game
 1. A clicks **Stoke**, then **Roll** repeatedly. Every roll should land: the pots grow and *last roll* shows the number (0.6.2 fixed the host's rolls being ignored). B clicks **Bank** at some point. Both windows should agree on pots and round.
    - During the game the host's money line says *In the pot: ...*, and B sees *Your stake is in the pot*, with no Pay button until the game ends.
 2. Let a 1 come up (fire out, pots wiped) and finish all 5 rounds. Check the winner shows on both sides, and the **History** button on the main page (or `/bf history`) counts the game.
@@ -50,7 +50,7 @@ A: `/bf burn 90` (fire has 90 s left). Watch the countdown on both clients. Star
 4. A: **Lock bets** on every round (Shift-click locks them all). B's window should switch to a **Payments** list showing what B owes across all rounds; B pays once, A sees B flip to paid. A presses **Start games** (unpaid bets are dropped), then **Winner** on a side. Winners' credit shows as *held*; the other side shows *lost*. A bet on a round nobody bet against should be refunded.
    B: after A presses **Winner**, B's chat should say "Your bet on ... won" if B backed the winner, and `/bf history` should show a *Side bets* line (settled, won, lost, gold) with the round listed. A round should never count twice (try `/reload` and rejoin the table). A's own bets, and a refunded round, should not appear.
 5. Try two rounds at once and more than one bet from the same player.
-6. A: move the **Host cut** slider (2, 5, 10, 20%) before any bets, then check it locks once B's bet is paid. Try **Remove round** on a round with no paid bets (later rounds renumber), and **Call off** on one with a paid bet (it refunds and stays listed). Use **New round** and the game dropdown to open another; the game mode (Duel, Deathroll, ...) should show at the top of B's window. With six rounds on the card **New round** greys out; once all six are finished (won or called off), New round starts a fresh card.
+6. A: when opening a round, click the cut button on the New round row (2, 5, 10, 20%) and open it: the round shows that cut and keeps it, and the next round starts with the same cut. Try **Remove round** on a round with no paid bets (later rounds renumber), and **Call off** on one with a paid bet (it refunds and stays listed). Use **New round** and the game dropdown to open another; the game mode (Duel, Deathroll, ...) should show at the top of B's window. With six rounds on the card **New round** greys out; once all six are finished (won or called off), New round starts a fresh card.
 
 ## 8. The Odd Man Out
 1. A: pick **The Odd Man Out** in the Game button before starting. B joins. (Practice players can fill more seats.)

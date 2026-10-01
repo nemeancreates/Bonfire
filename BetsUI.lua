@@ -21,6 +21,7 @@ local viewRound
 local viewPayments, lastPhase  -- the payment window: shown once every round is locked
 local adding = false  -- the host is naming a new round
 local mode = 1        -- index into Bets.MODES for the new round
+local cutIdx = 2      -- index into Bets.CUTS for the new round (5%)
 
 -- The bet you're building: what you've added up, or the amount on the dial if nothing's added.
 local function Pending()
@@ -48,7 +49,7 @@ local function SubmitRound()
 	if not sides then
 		return ns.Table:Refuse(("Two to %d sides: one in the first box, the rest in the second (Gopher vs Toad)."):format(MAX_SIDES))
 	end
-	local ri = ns.Table:AddRound(sides, 120, Bets.MODES[mode])
+	local ri = ns.Table:AddRound(sides, 120, Bets.MODES[mode], Bets.CUTS[cutIdx])
 	if ri then viewRound = ri end
 	adding = false
 	w.sideA:ClearFocus()
@@ -195,43 +196,11 @@ local function Build(frame)
 	UI.Tooltip(w.add, "Adds this amount to your bet. Switch coin type and add again to mix gold, silver and copper.")
 	UI.Tooltip(w.clear, "Start the bet over.")
 
-	-- Host: the cut, a four-stop slider (2, 5, 10, 20 percent).
-	w.cutRow = CreateFrame("Frame", nil, root)
-	w.cutRow:SetSize(356, 30)
-	w.cutRow:SetPoint("BOTTOMLEFT", 12, 92)
-	local label = w.cutRow:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-	label:SetPoint("LEFT", 2, 5)
-	label:SetText("Host cut")
-	w.cut = CreateFrame("Slider", nil, w.cutRow)
-	w.cut:SetSize(200, 16)
-	w.cut:SetPoint("LEFT", 70, 5)
-	w.cut:SetOrientation("HORIZONTAL")
-	w.cut:SetMinMaxValues(1, #Bets.CUTS)
-	w.cut:SetValueStep(1)
-	w.cut:SetObeyStepOnDrag(true)
-	local track = w.cut:CreateTexture(nil, "BACKGROUND")
-	track:SetPoint("LEFT")
-	track:SetPoint("RIGHT")
-	track:SetHeight(4)
-	track:SetColorTexture(0.45, 0.38, 0.22, 1)
-	w.cut:SetThumbTexture("Interface\\Buttons\\UI-SliderBar-Button-Horizontal")
-	for i, pct in ipairs(Bets.CUTS) do
-		local stop = w.cutRow:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-		stop:SetPoint("TOP", w.cut, "BOTTOMLEFT", (i - 1) / (#Bets.CUTS - 1) * 200, -1)
-		stop:SetText(pct .. "%")
-	end
-	w.cutNote = w.cutRow:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-	w.cutNote:SetPoint("LEFT", w.cut, "RIGHT", 8, 0)
-	w.cut:SetScript("OnValueChanged", function(_, value, byUser)
-		if byUser then ns.Table:SetCut(Bets.CUTS[math.floor(value + 0.5)]) end
-	end)
-	UI.Tooltip(w.cutRow, "The share of every pot the host keeps. Locked once bets are in, so the odds can't change under anyone.")
-
-	-- Host: naming a new round. [mode] [Oppa___] vs [Gopher___] [Open] [X]
+	-- Host: naming a new round. [mode] [Oppa_] vs [Gopher_] [5%] [Open] [X]
 	w.newRow = CreateFrame("Frame", nil, root)
 	w.newRow:SetSize(356, 24)
 	w.newRow:SetPoint("BOTTOMLEFT", 12, 94)
-	w.mode = UI.Button(w.newRow, "", 96, function() w.menu:SetShown(not w.menu:IsShown()) end)
+	w.mode = UI.Button(w.newRow, "", 84, function() w.menu:SetShown(not w.menu:IsShown()) end)
 	w.mode:SetPoint("LEFT")
 	UI.Tooltip(w.mode, "What kind of round this is. Everyone sees it in the betting window.")
 
@@ -255,7 +224,7 @@ local function Build(frame)
 
 	local function SideBox(tip)
 		local box = CreateFrame("EditBox", nil, w.newRow)
-		box:SetSize(70, 20)
+		box:SetSize(58, 20)
 		box:SetAutoFocus(false)
 		box:SetFontObject("GameFontHighlight")
 		box:SetTextInsets(5, 5, 0, 0)
@@ -286,9 +255,16 @@ local function Build(frame)
 	w.sideB:SetPoint("LEFT", w.vs, "RIGHT", 4, 0)
 	w.sideA:SetScript("OnTabPressed", function() w.sideB:SetFocus() end)
 	w.sideB:SetScript("OnTabPressed", function() w.sideA:SetFocus() end)
-	w.open = UI.Button(w.newRow, "Open", 46, SubmitRound)
-	w.open:SetPoint("LEFT", w.sideB, "RIGHT", 4, 0)
-	w.dismiss = UI.Button(w.newRow, "X", 24, CancelRound)
+	-- The host's cut of this round's pot, picked now and locked in for the round.
+	w.cutBtn = UI.Button(w.newRow, "", 40, function()
+		cutIdx = cutIdx % #Bets.CUTS + 1
+		ns.UI:Refresh()
+	end)
+	w.cutBtn:SetPoint("LEFT", w.sideB, "RIGHT", 4, 0)
+	UI.Tooltip(w.cutBtn, "Your cut of this round's pot. Pick it now: it's locked in for the round, so bettors always see the odds they bet on. Click to change (2, 5, 10, 20%).")
+	w.open = UI.Button(w.newRow, "Open", 42, SubmitRound)
+	w.open:SetPoint("LEFT", w.cutBtn, "RIGHT", 4, 0)
+	w.dismiss = UI.Button(w.newRow, "X", 22, CancelRound)
 	w.dismiss:SetPoint("LEFT", w.open, "RIGHT", 4, 0)
 
 	-- Bottom-left actions.
@@ -307,6 +283,10 @@ local function Build(frame)
 		local last = ns.Table.current and ns.Table.current.market and ns.Table.current.market.rounds
 		last = last and last[#last]
 		adding = true
+		-- Your cut starts at whatever you chose last.
+		for i, pct in ipairs(Bets.CUTS) do
+			if pct == Bonfire.db.global.betCut then cutIdx = i end
+		end
 		-- Start from the last round's sides (a rematch is one Enter away), or empty boxes.
 		w.sideA:SetText(last and last.sides[1] or "")
 		w.sideB:SetText(last and table.concat(last.sides, " vs ", 2) or "")
@@ -373,7 +353,6 @@ local function HideRoundView()
 	end
 	w.mine:SetText("")
 	for _, widget in ipairs(w.builder) do widget:Hide() end
-	w.cutRow:Hide()
 	-- Not the round-naming row: every view sets it itself, and hiding it even for a moment
 	-- takes the keyboard off its boxes (the page redraws every few seconds).
 end
@@ -458,10 +437,13 @@ local function ShowEmpty(frame, t, hosting)
 	w.clock:SetText("")
 	w.pool:SetText("")
 	w.mine:SetText(hosting
-		and "Open a round with New round: pick what it is, then name one side in each box."
+		and "Open a round with New round: pick what it is, name one side in each box, and choose your cut."
 		or "The host hasn't opened any side bets yet. Rounds show up here as soon as they do.")
 	w.newRow:SetShown(hosting and adding)
-	if hosting then w.mode:SetText(("|cffffd100%s|r |cffaaaaaav|r"):format(Bets.MODES[mode])) end
+	if hosting then
+		w.mode:SetText(("|cffffd100%s|r |cffaaaaaav|r"):format(Bets.MODES[mode]))
+		w.cutBtn:SetText(Bets.CUTS[cutIdx] .. "%")
+	end
 	w.new:SetEnabled(true)
 	Layout(hosting and { w.new } or {}, ACTIONS)
 end
@@ -494,17 +476,20 @@ function BetsUI:Show(frame, t)
 	end
 	w.toggle:SetShown(phase == "payment")
 	if phase == "payment" and viewPayments then
-		w.toggle:SetText("Rounds")
+		w.toggle:SetText("|cffffd100Rounds|r")
+		ns.UI.Pressed(w.toggle, true)
 		return ShowPayments(frame, t)
 	end
 	w.toggle:SetText("Payments")
+	ns.UI.Pressed(w.toggle, false)
 	HidePayments()
 
 	for i = 1, MAX_ROUNDS do
 		local rd, b = m.rounds[i], w.rounds[i]
 		if rd then
 			b:SetText(("|cff%s%d|r"):format(STATE_COLOR[rd.state] or "ffffff", i))
-			b:SetEnabled(i ~= ri)
+			b:SetEnabled(true)
+			b:SetButtonState(i == ri and "PUSHED" or "NORMAL", i == ri)  -- the round you're looking at stays pressed in
 			b:Show()
 		else
 			b:Hide()
@@ -525,7 +510,7 @@ function BetsUI:Show(frame, t)
 	local stateText = STATE_TEXT[r.state] or r.state
 	if r.state == "locked" then stateText = r.started and "games on" or "collecting payments" end
 	w.title:SetText(("%s  |cff%s%s|r"):format(r.title, STATE_COLOR[r.state] or "ffffff", stateText))
-	local poolNote = ("host cut %d%%"):format(m.cut or 0)
+	local poolNote = ("host cut %d%%"):format(r.cut or m.cut or 0)
 	if r.state == "done" then
 		local _, refunded, cut = Bets.Payouts(m, ri, r.winner)
 		if not refunded and cut > 0 then poolNote = "host kept " .. ns.CoinString(cut) end
@@ -621,20 +606,11 @@ function BetsUI:Show(frame, t)
 	w.clear:SetEnabled(db.total > 0)
 	for _, widget in ipairs(w.builder) do widget:SetShown(r.state == "open" and canBet and not hasBet) end
 
-	-- Host: naming a new round, or the cut slider
+	-- Host: naming a new round
 	w.newRow:SetShown(hosting and adding)
-	w.cutRow:SetShown(hosting and not adding)
 	if hosting then
 		w.mode:SetText(("|cffffd100%s|r |cffaaaaaav|r"):format(Bets.MODES[mode]))
-		local locked = Bets.HoldsGold(t)
-		local stop = 1
-		for i, pct in ipairs(Bets.CUTS) do
-			if math.abs(pct - (m.cut or 0)) < math.abs(Bets.CUTS[stop] - (m.cut or 0)) then stop = i end
-		end
-		w.cut:SetValue(stop)
-		w.cut:EnableMouse(not locked)
-		w.cut:SetAlpha(locked and 0.45 or 1)
-		w.cutNote:SetText(locked and "|cffff6666locked|r" or "")
+		w.cutBtn:SetText(Bets.CUTS[cutIdx] .. "%")
 	end
 
 	-- Bottom-left actions

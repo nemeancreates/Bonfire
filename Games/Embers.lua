@@ -1,13 +1,13 @@
 local _, ns = ...
 
--- Embers: push-your-luck with one shared die, so any number of players
+-- Bonfire (key "embers"): push-your-luck with one shared die, so any number of players
 -- play at once. The host clicks Roll (a server /roll 1-6); everyone still stoking adds the
 -- roll to their round pot. A 1 blows the fire out and every unbanked pot is lost.
 -- Bank at any time to keep your pot and sit out the rest of the round.
 -- Highest total after the last round takes the pot.
 --
 -- Pure rules only (no WoW API) so tests/run.lua can load it.
-local Embers = { name = "Embers", rounds = 5, sides = 6 }
+local Embers = { name = "Bonfire", rounds = 5, sides = 6 }
 ns.Games = ns.Games or {}
 ns.Games.embers = Embers
 

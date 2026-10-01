@@ -258,7 +258,7 @@ end)
 -- fills the fire list and a host's list of players nearby (the spyglass in the window does this).
 -- With a name, it whispers just that player (and they whisper back), which works across layers
 -- and tells a channel problem apart from a player who isn't running Bonfire at all.
-function ns.Ping(name)
+function ns.Ping(name, onDone)
 	name = strtrim(name or "")
 	if name ~= "" then
 		local target = ns.FullName(name)
@@ -288,6 +288,7 @@ function ns.Ping(name)
 		if n == 0 then
 			Bonfire:Print("  nobody answered. Compare /bf status on both: same faction and realm? Try /bf ping <their name>, or group up and ping again.")
 		end
+		if onDone then onDone(n) end
 	end)
 end
 

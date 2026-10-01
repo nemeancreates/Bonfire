@@ -84,7 +84,7 @@ end
 local function PackMarket(m)
 	local r, b = {}, {}
 	for i, rd in ipairs(m.rounds) do
-		r[i] = { ti = rd.title, sd = rd.sides, st = rd.state, w = rd.winner, lk = rd.lockAt, gm = rd.game, sr = rd.started and 1 or nil }
+		r[i] = { ti = rd.title, sd = rd.sides, st = rd.state, w = rd.winner, lk = rd.lockAt, gm = rd.game, sr = rd.started and 1 or nil, ct = rd.cut }
 	end
 	for i, bet in ipairs(m.bets) do
 		b[i] = { bet.id, bet.who, bet.round, bet.side, bet.amount, bet.paid and 1 or 0 }
@@ -96,7 +96,7 @@ local function UnpackMarket(d)
 	if type(d) ~= "table" or type(d.r) ~= "table" then return end
 	local m = { cut = d.c or 0, current = d.cur or 1, rounds = {}, bets = {}, nextBet = 1 }
 	for i, rd in ipairs(d.r) do
-		m.rounds[i] = { title = rd.ti, sides = rd.sd, state = rd.st, winner = rd.w, lockAt = rd.lk, game = rd.gm or "Custom", started = rd.sr == 1 }
+		m.rounds[i] = { title = rd.ti, sides = rd.sd, state = rd.st, winner = rd.w, lockAt = rd.lk, game = rd.gm or "Custom", started = rd.sr == 1, cut = rd.ct }
 	end
 	for i, b in ipairs(type(d.b) == "table" and d.b or {}) do
 		m.bets[i] = { id = b[1], who = b[2], round = b[3], side = b[4], amount = b[5], paid = b[6] == 1 }
@@ -289,8 +289,11 @@ end
 function Table:Host(anywhere)
 	if self.current then return Bonfire:Print("You're already at a table.") end
 	if not ns.BetReady() then return Bonfire:Print("Add an amount and Confirm bet first, or switch to For fun.") end
-	if not anywhere and not ns.AtCampfire() then
-		return Bonfire:Print("Rest at a campfire until you get the Welcoming Campfire buff (about a minute), or light one with a Basic Campfire Kit. /bf host skips this check.")
+	if not anywhere then
+		local ok, why = ns.HostCheck()
+		if not ok then
+			return Bonfire:Print(why or "Stand at a campfire (within 35 yd), or light one with a Basic Campfire Kit. /bf host skips this check.")
+		end
 	end
 	if not ns.Comm:ChannelId() or not ns.Comm.selfSender then
 		return Bonfire:Print("Still connecting to the Bonfire channel, try again in a few seconds.")
@@ -475,6 +478,7 @@ function Table:PutOut()
 	ns.Comm:Broadcast("X", {})
 	self.current, self.game, self.awaitingRoll = nil, nil, nil
 	Bonfire.db.char.hosted = nil
+	ns.Beacon:SyncMine()
 	ns.UI:Refresh()
 end
 
@@ -670,6 +674,18 @@ function Table:Start()
 	ns.Quips:OnStart(t)
 end
 
+-- The host's first roll click of a game says it has begun (always); every other roll click is an
+-- ordinary click for the quips.
+function Table:SayBegun()
+	local t = self.current
+	if self:IsHosting() and t.id and self.begunId ~= t.id then
+		self.begunId = t.id
+		ns.Quips:Begun()
+	else
+		ns.Quips:Click("roll")
+	end
+end
+
 -- awaitingRoll is when the host clicked Roll: the next roll line from us in chat is that roll's
 -- result. It's a time rather than a flag cleared by a timer, because each click's timer used to
 -- clear the wait of the click after it, and that roll's result was then ignored (over half of
@@ -686,7 +702,7 @@ end
 -- From the Roll button: it has to be a real server /roll everyone nearby sees.
 function Table:Roll()
 	if not self:CanRoll() then return end
-	ns.Quips:Click("roll")
+	self:SayBegun()
 	self.awaitingRoll = GetTime()
 	RandomRoll(1, Embers.sides)
 	C_Timer.After(ROLL_TIMEOUT + 0.05, function() ns.UI:Refresh() end)  -- in case it never shows up
@@ -869,7 +885,7 @@ function Table:OmoRoll()
 	local range, canRoll, round = self:OmoRollInfo()
 	if not canRoll then return end
 	self.myRoll = { id = self.current.id, round = round }
-	ns.Quips:Click("roll")
+	self:SayBegun()
 	RandomRoll(1, range)
 	ns.UI:Refresh()
 end
@@ -1064,32 +1080,25 @@ function Table:CheckBets()
 	end
 end
 
-function Table:AddRound(sides, seconds, game)
+-- cut: the host's share of this round's pot in percent (one of Bets.CUTS), fixed once it's open.
+-- The last one chosen is what the next round starts with.
+function Table:AddRound(sides, seconds, game, cut)
 	local t = self.current
 	if not self:IsHosting() then return Bonfire:Print("Host a table first (/bf host).") end
 	if t.stake == 0 then return Bonfire:Print("Side bets use gold: switch the table to Gambling and Confirm a bet first.") end
 	t.market = t.market or Bets.NewMarket(Bonfire.db.global.betCut)
 	seconds = seconds or 120
+	cut = tContains(Bets.CUTS, cut) and cut or t.market.cut
 	local title = table.concat(sides, " vs ")
-	local ri, fresh = Bets.AddRound(t.market, title, sides, GetServerTime() + seconds, game)
+	local ri, fresh = Bets.AddRound(t.market, title, sides, GetServerTime() + seconds, game, cut)
 	if not ri then
 		return self:Refuse(("The card holds %d rounds. Finish or remove one first."):format(Bets.MAX_ROUNDS))
 	end
+	t.market.cut, Bonfire.db.global.betCut = cut, cut
 	if fresh then Bonfire:Print("Every round on the old card was settled, so this starts a new card.") end
-	Bonfire:Printf("Round %d added (%s): %s. Bets close in %d seconds.", ri, game or "Custom", title, seconds)
+	Bonfire:Printf("Round %d added (%s): %s. Host cut %d%%, locked in. Bets close in %d seconds.", ri, game or "Custom", title, cut, seconds)
 	self:Push()
 	return ri
-end
-
--- The host's cut: 2, 5, 10 or 20 percent. Locked while anyone's money is in, so the odds
--- can't change under a bettor.
-function Table:SetCut(pct)
-	local t = self.current
-	if not self:IsHosting() or not t.market then return end
-	if Bets.HoldsGold(t) then return Bonfire:Print("The cut is locked while bets are in.") end
-	t.market.cut = pct
-	Bonfire.db.global.betCut = pct
-	self:Push()
 end
 
 -- Six practice players and a card of three fights they bet pretend gold on, so the betting
@@ -1358,6 +1367,7 @@ function Table:OnOfferAccepted(sender)
 	Bonfire:Printf("%s took over your table.", ns.Short(sender))
 	self.current, self.game, self.awaitingRoll = nil, nil, nil
 	Bonfire.db.char.hosted = nil
+	ns.Beacon:SyncMine()
 	ns.UI:Refresh()
 end
 

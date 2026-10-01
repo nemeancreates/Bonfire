@@ -22,7 +22,7 @@ Formerly "Campfire Games". Status: MVP scaffold built. Researched 2026-09-28 (Fo
 1. **Discovery:** broadcast campfire, zone, coords, game and seats on a hidden custom channel; show nearby open tables on the map/minimap.
 2. **Table lobby:** host-authoritative state machine, 2–10 seats plus spectators, AceComm + ChatThrottleLib.
 3. **Games** (1–2 min, simultaneous turns for big tables):
-   - Embers: push-your-luck with one shared die (built for the MVP)
+   - Bonfire (first called Embers): push-your-luck with one shared die (built for the MVP)
    - Deathroll (server /roll)
    - Liar's Dice / bluff dice
    - Push-your-luck dice (Pig/Farkle-style)
@@ -84,7 +84,7 @@ Six low-poly critters (rat, gopher, frog, squirrel, rabbit, and one more), shown
 
 ## Main menu and game picker (design)
 
-`/bf` stays the front door. When you host, the lobby gets a game picker (Embers, Deathroll, Critter Race, Duel) above the bet builder, and each game has its own play view inside the same window. The table only knows "the current game" and calls into a small shared game interface, so adding a game doesn't touch the ledger or the bets.
+`/bf` stays the front door. When you host, the lobby gets a game picker (Bonfire, Deathroll, Critter Race, Duel) above the bet builder, and each game has its own play view inside the same window. The table only knows "the current game" and calls into a small shared game interface, so adding a game doesn't touch the ledger or the bets.
 
 ## Quips and voice lines (built; the delivery rules need testing in game)
 
@@ -124,7 +124,7 @@ A shared, gossiped reputation ledger for hosts. See [HONEST-BROKER.md](HONEST-BR
 
 ## Phases
 
-1. **MVP:** beacon + map pins, lobby, one dice game (Embers), For fun or gold stakes with host escrow, pay-in/payout trade queue, 35 yd fold range. *Built; needs beta verification (see BETA-NOTES.md).*
+1. **MVP:** beacon + map pins, lobby, one dice game (Bonfire, first called Embers), For fun or gold stakes with host escrow, pay-in/payout trade queue, 35 yd fold range. *Built; needs beta verification (see BETA-NOTES.md).*
 2. Practice players (built), side bets, then Deathroll, Duels and Critter Race on top of them; Honest Broker alongside.
 3. Synced jukebox.
 4. Band session rhythm mode.

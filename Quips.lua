@@ -18,6 +18,7 @@ local Quips = {
 		cashout = 0.6,   -- you pressed Cash out
 		click = 0.08,    -- any other click in Bonfire, Roll and Pick included
 		bot = 0.5,       -- a practice player reacts to an event
+	-- (begun is not here: the host's first roll of a game always says it)
 	},
 	-- Seconds a waiting line stays good for; after that it's dropped unsaid.
 	EXPIRE = { roll_high = 8, roll_low = 8, bust = 8, win = 30, lose = 30, streak_win = 30, streak_lose = 30 },
@@ -37,6 +38,7 @@ Quips.lines = {
 	roll_low = { "Oof, small one.", "The dice hate me.", "Could've been worse. Maybe." },
 	bust = { "It sizzled out!", "Not the fire!", "And there goes the pot." },
 	cashout = { "Pleasure doing business.", "Thank you kindly!", "Until next time, friends." },
+	begun = { "And we're off!", "The game is on!", "Dice in the air!", "First roll, here we go!" },
 	ambient = { "Nothing like a fire on a cold night.", "Anyone else smell marshmallows?", "This is the life.", "Who's up for another round?", "Watch the sparks!", "Don't stand too close to the fire." },
 }
 
@@ -109,6 +111,12 @@ end
 function Quips:Queue(kind)
 	if not self:Enabled() or not self:Ready() then return end
 	self.pending, self.pendingAt = kind, GetTime()
+end
+
+-- The host's first roll of a game: always says the game has begun, whatever the chance or the gap
+-- since the last line (a line waiting for its moment keeps waiting).
+function Quips:Begun()
+	if self:Enabled() then self:Speak("begun") end
 end
 
 -- Called from every button click that can carry speech; context names the click ("roll",

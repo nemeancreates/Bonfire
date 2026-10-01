@@ -95,7 +95,7 @@ ns.Broker = {
 	Received = function(_, partner, copper) received[#received + 1] = { partner, copper } end,
 }
 ns.Beacon = { Announce = function() end, Remove = function() end, fires = {}, Distance = function() return 5 end,
-	TableData = function() return { m = 1, x = 5000, y = 5000 } end,
+	TableData = function() return { m = 1, x = 5000, y = 5000 } end, SyncMine = function() end,
 	OnBeacon = function(self, d, sender) self.fires[sender] = { state = "open", seats = 1, maxSeats = 10, d = d } end }
 ns.Comm = {
 	selfSender = hostSeat, On = function() end, ChannelId = function() return 1 end,
@@ -385,6 +385,19 @@ local function quipTiming()
 		advance(20)
 		Quips:Click("roll")  -- a game result can ride on any click
 		assert(#said == 2 and isKind(said[2], "win"), "the win line wasn't said")
+		-- The host's first roll of a game always says it has begun (even right after another line);
+		-- the second roll click doesn't.
+		said = {}
+		Table.current = { host = hostSeat, state = "playing", game = "embers", id = "g-begun", seats = { hostSeat } }
+		Table.begunId = nil
+		Quips.last = GetTime()  -- spoke a moment ago: the gap would normally keep it quiet
+		Table:SayBegun()
+		assert(#said == 1 and isKind(said[1], "begun"), "the first roll of a game didn't say it began")
+		Table:SayBegun()
+		assert(#said == 1, "the second roll click said it began again")
+		Table.current.id = "g-next"
+		Table:SayBegun()
+		assert(#said == 2 and isKind(said[2], "begun"), "the next game's first roll didn't say it began")
 		-- Odd Man Out numbers are neither good nor bad: no roll reactions there.
 		advance(10)
 		Table.current.game = "oddmanout"
@@ -423,10 +436,12 @@ local function stateTraffic()
 		Table:Push()
 		advance(1)
 		assert(#made == 2, "an unchanged state went out again")
-		t.lastRoll = 4
+		t.lastRoll = (t.lastRoll or 0) + 1  -- something in the state changes; the card doesn't
 		Table:Push()
 		advance(1)
-		assert(#made == 3 and made[3].mk == nil and made[3].mv == made[2].mv, "the unchanged card was sent again")
+		assert(#made == 3 and made[3].mk == nil and made[3].mv == made[2].mv,
+			("the unchanged card was sent again (%d sent, card in #3: %s, checksums %s vs %s)"):format(#made,
+				tostring(made[3] and made[3].mk ~= nil), tostring(made[3] and made[3].mv), tostring(made[2].mv)))
 		-- Player side: the same checksum keeps the card; a different one asks for it.
 		local host = t.host
 		local prev = { host = host, market = t.market, mv = made[2].mv, seats = t.seats }

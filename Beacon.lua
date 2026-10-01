@@ -19,6 +19,20 @@ local ICON = "Interface\\Icons\\Spell_Fire_Fire"
 local function PinTooltip(pin)
 	local fire = pin.fire
 	GameTooltip:SetOwner(pin, "ANCHOR_RIGHT")
+	if fire.mine then
+		GameTooltip:AddLine("Bonfire: your fire")
+		if fire.state == "camp" then
+			GameTooltip:AddLine("Your campfire, no table yet. /bf to host at it.", 1, 1, 1, true)
+		else
+			local game = ns.Games[fire.game]
+			GameTooltip:AddLine(("%s  %d/%d seats %s"):format(game and game.name or "?", fire.seats or 0, fire.maxSeats or 0, ns.StakeBadge(fire.stake)), 1, 1, 1)
+			if fire.hidden then
+				GameTooltip:AddLine("Hidden from other players while practice players sit at this gold table.", 1, 0.4, 0.4, true)
+			end
+		end
+		GameTooltip:Show()
+		return
+	end
 	GameTooltip:AddLine("Bonfire: " .. ns.Short(fire.host))
 	if fire.state == "camp" then
 		GameTooltip:AddLine("A campfire, no table yet", 1, 1, 1)
@@ -89,6 +103,7 @@ end
 
 function Beacon:Announce()
 	local t = ns.Table.current
+	self:SyncMine()  -- our own pin, even when the table is hidden from others
 	if not t or t.host ~= ns.Me() then return end
 	if t.stake > 0 and ns.Table:HasBots() then return end  -- practice gold tables stay off the map
 	self.lastAnnounce = GetTime()
@@ -186,6 +201,33 @@ function Beacon:Pin(fire)
 	Pins:AddWorldMapIconMap(self, fire.world, fire.mapID, fire.x, fire.y, HBD_PINS_WORLDMAP_SHOW_PARENT)
 end
 
+-- Our own fire on our own maps: the table we host, or the campfire we placed. (Other players'
+-- fires come from their beacons; ours we never hear back, so it's pinned from here.)
+function Beacon:SyncMine()
+	local t, placed, me = ns.Table.current, ns.Table.placed, ns.Me()
+	local spot
+	if t and t.host == me and t.fire then
+		spot = { t.fire[1], t.fire[2], t.fire[3], "table" }
+	elseif not t and placed and GetServerTime() < placed.at + ns.Table.FIRE_LIFETIME then
+		spot = { placed.map, placed.x, placed.y, "camp" }
+	end
+	if not spot then
+		if self.mine then self:Unpin(self.mine) end
+		self.mine = nil
+		return
+	end
+	local fire = self.mine or { mine = true, host = me }
+	self.mine = fire
+	fire.mapID, fire.x, fire.y = spot[1], spot[2], spot[3]
+	if spot[4] == "table" then
+		fire.state, fire.game, fire.seats, fire.maxSeats, fire.stake = t.state, t.game, #t.seats, t.maxSeats, t.stake
+		fire.hidden = t.stake > 0 and ns.Table:HasBots()
+	else
+		fire.state, fire.game, fire.seats, fire.maxSeats, fire.stake, fire.hidden = "camp", nil, 0, 0, 0, false
+	end
+	self:Pin(fire)
+end
+
 function Beacon:Unpin(fire)
 	if not fire.mini then return end
 	Pins:RemoveMinimapIcon(self, fire.mini)
@@ -224,6 +266,7 @@ function Beacon:Tick()
 			fire.alerted = near or (fire.alerted and d ~= nil and d <= NEARBY + 40)
 		end
 	end
+	self:SyncMine()
 	ns.UI:Refresh()  -- distances drift as you walk
 end
 

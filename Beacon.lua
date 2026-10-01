@@ -97,7 +97,7 @@ function Beacon:TableData()
 	local t = ns.Table.current
 	return {
 		m = t.fire[1], x = floor(t.fire[2] * 10000), y = floor(t.fire[3] * 10000),
-		g = t.game, s = #t.seats, n = t.maxSeats, st = t.state, a = t.stake,
+		g = t.game, s = #t.seats, ms = t.maxSeats, st = t.state, a = t.stake,
 	}
 end
 
@@ -164,7 +164,7 @@ function Beacon:AnnounceFire()
 	self.lastAnnounce = GetTime()
 	ns.Comm:Broadcast("B", {
 		m = f.map, x = floor(f.x * 10000), y = floor(f.y * 10000),
-		s = 0, n = 0, st = "camp", a = 0, e = ends,
+		s = 0, ms = 0, st = "camp", a = 0, e = ends,
 	}, "BULK")
 end
 
@@ -182,7 +182,7 @@ function Beacon:OnBeacon(d, sender)
 	if type(d.m) ~= "number" or type(d.x) ~= "number" or type(d.y) ~= "number" then return end
 	local fire = self.fires[sender] or { host = sender }
 	fire.mapID, fire.x, fire.y = d.m, d.x / 10000, d.y / 10000
-	fire.game, fire.seats, fire.maxSeats, fire.state, fire.stake = d.g, d.s, d.n, d.st, tonumber(d.a) or 0
+	fire.game, fire.seats, fire.maxSeats, fire.state, fire.stake = d.g, d.s, tonumber(d.ms) or 0, d.st, tonumber(d.a) or 0
 	fire.seen, fire.ends = GetTime(), d.e
 	self.fires[sender] = fire
 	self:Pin(fire)

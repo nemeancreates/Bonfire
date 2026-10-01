@@ -115,7 +115,7 @@ local function Wire(t, withMarket)
 		tl[i] = r and { r.w, r.l, r.net, r.streak } or { 0, 0, 0, 0 }
 	end
 	return {
-		h = t.host, g = t.game, a = t.stake, n = t.maxSeats, st = t.state, s = t.seats, b = b, tl = tl,
+		h = t.host, g = t.game, a = t.stake, ms = t.maxSeats, st = t.state, s = t.seats, b = b, tl = tl,
 		f = { t.fire[1], floor(t.fire[2] * 10000), floor(t.fire[3] * 10000) },
 		pq = Ledger.Payouts(t), id = t.id, gs = t.gs, w = t.winners, sh = t.share, lr = t.lastRoll,
 		e = t.ends, cl = t.closing and 1 or nil, mk = withMarket and t.market and PackMarket(t.market) or nil, ra = t.rematchAt,
@@ -125,7 +125,7 @@ end
 local function Unwire(d)
 	if type(d.s) ~= "table" or type(d.a) ~= "number" or type(d.f) ~= "table" then return end
 	local t = {
-		host = d.h, game = d.g, stake = d.a, maxSeats = d.n, state = d.st, seats = d.s,
+		host = d.h, game = d.g, stake = d.a, maxSeats = tonumber(d.ms) or 10, state = d.st, seats = d.s,
 		fire = { d.f[1], (d.f[2] or 0) / 10000, (d.f[3] or 0) / 10000 }, payouts = d.pq or {},
 		id = d.id, gs = d.gs, winners = d.w, share = d.sh, lastRoll = d.lr, balances = {},
 		ends = d.e, closing = d.cl == 1, market = UnpackMarket(d.mk), rematchAt = d.ra,
@@ -1523,7 +1523,7 @@ function Table:GroupInvite(name)
 	end
 	local function send()
 		self.invitesOut[name] = GetTime()
-		if PartyCall("InviteUnit", name) then
+		if PartyCall("InviteUnit", ns.SendName(name)) then
 			Note("sent %s a party invite", ns.Short(name))
 		else
 			Note("couldn't send %s a party invite", ns.Short(name))

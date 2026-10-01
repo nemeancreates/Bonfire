@@ -73,6 +73,15 @@ function ns.Me()
 	return ns.FullName(ns.Comm and ns.Comm.selfSender or UnitName("player"))
 end
 
+-- The name to whisper or invite someone by. On our own realm the game wants it without the realm
+-- ("La Boohboo", not "La Boohboo-ClassicBetaPvE2"); with it, whispers and invites go nowhere.
+function ns.SendName(name)
+	if type(name) ~= "string" then return name end
+	local realm = GetNormalizedRealmName()
+	if realm and name:sub(-(#realm + 1)) == "-" .. realm then return name:sub(1, -(#realm + 2)) end
+	return name
+end
+
 -- Different APIs give different forms of the same name, so compare on the first word.
 function ns.NameKey(name)
 	if not name then return end

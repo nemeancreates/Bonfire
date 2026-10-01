@@ -77,6 +77,8 @@ ns.FullName = function(n)
 	return n:find("-", 1, true) and n or n .. "-Realm"
 end
 ns.Short = function(n) return n and (n:gsub("%-.*", "")) end
+-- On our own realm the game wants names without the realm (Core.lua's ns.SendName).
+ns.SendName = function(n) return n and (n:gsub("%-Realm$", "")) end
 ns.NameKey = function(name) return name and (name:match("^[^%s%-]+") or name):lower() end
 ns.SignedCoins = function(c) return tostring(c) end
 ns.Coins = function(c) if not c or c == 0 then return "for fun" end return ns.CoinString(c) end
@@ -427,6 +429,10 @@ local function stateTraffic()
 		Table:OnJoin("Pal-Realm")
 		advance(1)
 		assert(#made == 1 and made[1].mk == nil and made[1].mv == nil, "no plain state for the real player")
+		-- k, i and n are the message layer's own (kind, sender id, message number): the state must
+		-- never use them, or they get overwritten on the way out (seat counts once read 1/34).
+		for _, key in ipairs({ "k", "i", "n" }) do assert(made[1][key] == nil, "the state uses the reserved key " .. key) end
+		assert(made[1].ms == Table.current.maxSeats, "the seat count isn't in the state")
 		local t = Table.current
 		t.stake, t.market = 500, ns.Bets.NewMarket(5)
 		ns.Bets.AddRound(t.market, "A vs B", { "A", "B" }, GetServerTime() + 60)
@@ -519,12 +525,12 @@ local function invites()
 		newTable("embers", 0, false)
 		partyCalls, group.size, group.raid, group.leader = {}, 0, false, true
 		Table:OnJoin("Pal-Realm")
-		assert(partyCalls[1] == "invite Pal-Realm", "a new player wasn't invited to the group")
+		assert(partyCalls[1] == "invite Pal", "a new player wasn't invited to the group (by name, without our own realm)")
 		partyCalls, group.size = {}, 5
 		Table:OnJoin("Sixth-Realm")
 		assert(partyCalls[1] == "raid" and #partyCalls == 1, "a full party wasn't made a raid first")
 		advance(1.5)
-		assert(partyCalls[2] == "invite Sixth-Realm", "the sixth wasn't invited once the raid formed")
+		assert(partyCalls[2] == "invite Sixth", "the sixth wasn't invited once the raid formed")
 		partyCalls, group.raid, group.leader = {}, false, false
 		Table:OnJoin("Seventh-Realm")
 		assert(#partyCalls == 0, "invited without being the group's leader")
@@ -576,7 +582,7 @@ local function settings()
 		assert(whispers[#whispers] == "JW Asker-Realm", "the player wasn't told to wait")
 		assert(Table:Requests()[1].name == "Asker-Realm", "the request isn't listed for the host")
 		Table:LetIn("Asker-Realm")
-		assert(tContains(Table.current.seats, "Asker-Realm") and partyCalls[1] == "invite Asker-Realm", "Let in didn't seat and invite")
+		assert(tContains(Table.current.seats, "Asker-Realm") and partyCalls[1] == "invite Asker", "Let in didn't seat and invite")
 		assert(#Table:Requests() == 0, "the request stayed listed")
 		g.autoInvite, g.bigTables = true, false
 		Table.current = nil

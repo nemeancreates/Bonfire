@@ -187,7 +187,7 @@ function Comm:Whisper(target, kind, data)
 	data = data or {}
 	data.k, data.i = kind, self.id
 	self.sent = self.sent + 1
-	Bonfire:SendCommMessage(self.PREFIX, Comm.Seal(Bonfire:Serialize(data)), "WHISPER", target, "ALERT")
+	Bonfire:SendCommMessage(self.PREFIX, Comm.Seal(Bonfire:Serialize(data)), "WHISPER", ns.SendName(target), "ALERT")
 end
 
 function Comm:Receive(payload, distribution, sender)
